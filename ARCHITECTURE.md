@@ -44,6 +44,21 @@ SQLite data layer — no schema duplication.
    ```
 3. Both apps query the one `discvault.db` — single source of truth for data.
 
+## Cloud sync & backup
+- **Primary**: Turso (libSQL, SQLite-compatible) as the cloud-synced database.
+  Desktop and mobile each keep a local embedded replica for offline-first
+  reads/writes, syncing to Turso cloud when online — no rewrite of existing
+  SQLite schema/queries/FTS needed. Free tier (5GB storage, 500M reads/mo,
+  10M writes/mo) comfortably covers this dataset.
+- **Backup**: scheduled export of the Turso DB to a `.db` file, uploaded to
+  Cloudflare R2 or Backblaze B2 (both 10GB free, plain blob storage), keeping
+  the last N snapshots. Point-in-time recovery if Turso has an incident or
+  data is accidentally deleted — independent of the live sync path.
+- Rejected: dual-write to two live DBs (e.g. Turso + Supabase) — not atomic,
+  risks silent divergence between stores, and Supabase's Postgres dialect
+  would fragment the shared SQLite schema/query layer for marginal benefit
+  over what embedded replicas + snapshot backups already provide.
+
 ## Repo layout
 ```
 DiscVault/
