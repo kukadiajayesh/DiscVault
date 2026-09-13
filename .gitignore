@@ -5,3 +5,13 @@
 # source of truth, not git.
 data/discvault.db
 *.dvault
+
+# Node / build
+node_modules/
+dist/
+*.tsbuildinfo
+coverage/
+
+# Cloudflare
+.wrangler/
+.dev.vars

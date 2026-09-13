@@ -1,0 +1,20 @@
+{
+  "name": "@discvault/schema",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./node": "./src/node-sqlite.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p .",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@discvault/sync-protocol": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "26.5.1",
+    "vitest": "4.1.11"
+  }
+}

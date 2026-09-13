@@ -1,0 +1,23 @@
+{
+  "name": "discvault",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.33.0",
+  "engines": {
+    "node": ">=22.12"
+  },
+  "scripts": {
+    "dev:web": "pnpm --filter @discvault/web dev",
+    "dev:api": "pnpm --filter @discvault/api dev",
+    "build": "pnpm -r build",
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm -r test",
+    "lint": "biome check .",
+    "format": "biome format --write .",
+    "import-legacy": "pnpm --filter @discvault/import-legacy start"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.5.13",
+    "typescript": "6.0.3"
+  }
+}

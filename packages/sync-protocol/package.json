@@ -1,0 +1,18 @@
+{
+  "name": "@discvault/sync-protocol",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p .",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "zod": "4.6.4"
+  },
+  "devDependencies": {
+    "vitest": "4.1.11"
+  }
+}

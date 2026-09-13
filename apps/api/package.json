@@ -1,0 +1,27 @@
+{
+  "name": "@discvault/api",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "db:migrate:local": "wrangler d1 migrations apply DIRECTORY --local",
+    "db:migrate:remote": "wrangler d1 migrations apply DIRECTORY --remote",
+    "cf-typegen": "wrangler types --env-interface CloudflareBindings src/worker-configuration.d.ts",
+    "typecheck": "tsc -p .",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@discvault/schema": "workspace:*",
+    "@discvault/sync-protocol": "workspace:*",
+    "better-auth": "1.7.4",
+    "hono": "4.13.7",
+    "zod": "4.6.4"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "0.22.0",
+    "@types/node": "26.5.1",
+    "vitest": "4.1.11",
+    "wrangler": "4.131.1"
+  }
+}

@@ -1,0 +1,26 @@
+{
+  "$schema": "./node_modules/@biomejs/biome/configuration_schema.json",
+  "vcs": { "enabled": true, "clientKind": "git", "useIgnoreFile": true },
+  "files": {
+    "includes": [
+      "**",
+      "!**/dist",
+      "!**/.wrangler",
+      "!**/coverage",
+      "!**/*.d.ts",
+      "!apps/api/src/worker-configuration.d.ts",
+      "!pnpm-lock.yaml"
+    ]
+  },
+  "formatter": { "enabled": true, "indentStyle": "space", "lineWidth": 140 },
+  "linter": {
+    "enabled": true,
+    "rules": {
+      "recommended": true,
+      "correctness": { "noUnusedVariables": "error", "noUnusedImports": "error" },
+      "style": { "useImportType": "error", "useNodejsImportProtocol": "error" }
+    }
+  },
+  "javascript": { "formatter": { "quoteStyle": "double" } },
+  "json": { "formatter": { "enabled": true } }
+}

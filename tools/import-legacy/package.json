@@ -1,0 +1,23 @@
+{
+  "name": "@discvault/import-legacy",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "import-legacy": "./src/cli.ts"
+  },
+  "scripts": {
+    "start": "tsx src/cli.ts",
+    "typecheck": "tsc -p .",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@discvault/schema": "workspace:*",
+    "@discvault/sync-protocol": "workspace:*",
+    "fflate": "0.8.3"
+  },
+  "devDependencies": {
+    "@types/node": "26.5.1",
+    "tsx": "4.23.13",
+    "vitest": "4.1.11"
+  }
+}
