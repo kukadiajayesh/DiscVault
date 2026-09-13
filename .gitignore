@@ -1,0 +1,5 @@
+.DS_Store
+
+# Generated from dvd_manager.mdb via data/migrate.sh — Turso + R2/B2 backups
+# are the source of truth going forward, not git.
+data/discvault.db
