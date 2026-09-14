@@ -166,8 +166,6 @@ export default function DiscExplorer() {
                 }}
               >
                 <span>{d?.media_type ?? "—"}</span>
-                <span>·</span>
-                <span>{d?.location_name ?? d?.location_slot ?? "No location"}</span>
                 {d && (
                   <span
                     style={{
@@ -589,7 +587,7 @@ export default function DiscExplorer() {
       {tab === "activity" && (
         <div style={{ flex: 1, minHeight: 0, overflow: "auto", padding: "20px 24px" }}>
           <span style={{ font: "400 13px/1.5 'Instrument Sans', system-ui, sans-serif", color: "var(--dv-text-3)" }}>
-            No activity recorded yet. Scan, loan and edit history will appear here.
+            No activity recorded yet. Scan and edit history will appear here.
           </span>
         </div>
       )}

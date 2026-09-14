@@ -9,8 +9,6 @@ export interface FileHit {
   ext: string | null;
   created: string | null;
   title: string | null;
-  location_slot: string | null;
-  location: string | null;
 }
 
 /**
@@ -23,9 +21,8 @@ export function searchFiles(db: SqlDb, query: string, options: { limit?: number;
   const limit = Math.min(options.limit ?? 200, 1000);
   const offset = options.offset ?? 0;
   const select = `SELECT f.file_id, f.disc_no, f.name, f.rel_path, f.size_kb, f.ext, f.created,
-      d.title, d.location_slot, l.name AS location`;
-  const joins = `JOIN disc d ON d.disc_no = f.disc_no AND d.deleted_at IS NULL
-      LEFT JOIN location l ON l.id = d.location_id AND l.deleted_at IS NULL`;
+      d.title`;
+  const joins = `JOIN disc d ON d.disc_no = f.disc_no AND d.deleted_at IS NULL`;
   if (q.length >= 3) {
     return db.all<FileHit>(
       `${select} FROM file_fts s JOIN file f ON f.file_id = s.rowid ${joins}
@@ -48,8 +45,6 @@ export interface FolderHit {
   size_kb: number | null;
   created: string | null;
   title: string | null;
-  location_slot: string | null;
-  location: string | null;
 }
 
 /** Substring search over folder names, mirroring {@link searchFiles} (Search screen's Folders/Both scope). */
@@ -59,9 +54,8 @@ export function searchFolders(db: SqlDb, query: string, options: { limit?: numbe
   const limit = Math.min(options.limit ?? 200, 1000);
   const offset = options.offset ?? 0;
   const select = `SELECT fo.folder_id, fo.disc_no, fo.name, fo.rel_path, fo.size_kb, fo.created,
-      d.title, d.location_slot, l.name AS location`;
-  const joins = `JOIN disc d ON d.disc_no = fo.disc_no AND d.deleted_at IS NULL
-      LEFT JOIN location l ON l.id = d.location_id AND l.deleted_at IS NULL`;
+      d.title`;
+  const joins = `JOIN disc d ON d.disc_no = fo.disc_no AND d.deleted_at IS NULL`;
   if (q.length >= 3) {
     return db.all<FolderHit>(
       `${select} FROM folder_fts s JOIN folder fo ON fo.folder_id = s.rowid ${joins}

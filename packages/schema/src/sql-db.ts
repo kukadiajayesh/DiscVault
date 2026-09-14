@@ -16,7 +16,10 @@ export interface SqlDb {
 export interface Migration {
   version: number;
   name: string;
-  statements: string[];
+  /** Plain DDL, run in order. */
+  statements?: string[];
+  /** For migrations that must check current schema state (e.g. dropping a column only if it's still there). */
+  run?: (db: SqlDb) => void;
 }
 
 /** Applies migrations newer than the stored version. Migrations only ever add (§5.3). */
@@ -25,7 +28,8 @@ export function migrate(db: SqlDb, migrations: Migration[], store: { get(): numb
   for (const m of [...migrations].sort((a, b) => a.version - b.version)) {
     if (m.version <= current) continue;
     db.transaction(() => {
-      for (const statement of m.statements) db.exec(statement);
+      for (const statement of m.statements ?? []) db.exec(statement);
+      m.run?.(db);
       store.set(m.version);
     });
     current = m.version;

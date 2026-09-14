@@ -9,7 +9,6 @@ import Scan from "./screens/Scan.js";
 import Search from "./screens/Search.js";
 import Settings from "./screens/Settings.js";
 import Setup from "./screens/Setup.js";
-import Stub from "./screens/Stub.js";
 import Sync from "./screens/Sync.js";
 
 /** Code-based routes for the 14 screens (§8) plus the disc-explorer browse splat and settings splat. */
@@ -69,38 +68,6 @@ const scanRoute = createRoute({
 const syncRoute = createRoute({ getParentRoute: () => appLayoutRoute, path: "/sync", component: Sync });
 const settingsRoute = createRoute({ getParentRoute: () => appLayoutRoute, path: "/settings/$", component: Settings });
 
-// Phase 4 (§8, items 10-14): position in the information architecture is set; content is a stub.
-const duplicatesRoute = createRoute({
-  getParentRoute: () => appLayoutRoute,
-  path: "/duplicates",
-  component: () => <Stub title="Duplicate finder" />,
-});
-const statsRoute = createRoute({
-  getParentRoute: () => appLayoutRoute,
-  path: "/stats",
-  component: () => <Stub title="Statistics & reports" />,
-});
-const collectionsRoute = createRoute({
-  getParentRoute: () => appLayoutRoute,
-  path: "/collections",
-  component: () => <Stub title="Collections" />,
-});
-const collectionRoute = createRoute({
-  getParentRoute: () => appLayoutRoute,
-  path: "/collections/$id",
-  component: () => <Stub title="Collection" />,
-});
-const locationsRoute = createRoute({
-  getParentRoute: () => appLayoutRoute,
-  path: "/locations",
-  component: () => <Stub title="Locations & loans" />,
-});
-const healthRoute = createRoute({
-  getParentRoute: () => appLayoutRoute,
-  path: "/health",
-  component: () => <Stub title="Data health" />,
-});
-
 const routeTree = rootRoute.addChildren([
   loginRoute,
   setupRoute,
@@ -112,12 +79,6 @@ const routeTree = rootRoute.addChildren([
     scanRoute,
     syncRoute,
     settingsRoute,
-    duplicatesRoute,
-    statsRoute,
-    collectionsRoute,
-    collectionRoute,
-    locationsRoute,
-    healthRoute,
   ]),
 ]);
 

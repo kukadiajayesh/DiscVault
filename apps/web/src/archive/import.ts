@@ -166,8 +166,6 @@ export async function importArchive(
         title: disc.title,
         media_type: disc.media_type,
         status: disc.status,
-        location_id: disc.location_id,
-        location_slot: disc.location_slot,
         notes: disc.notes,
         meta: disc.meta,
       });

@@ -15,7 +15,7 @@ function freshDb() {
 describe("prepareLocalDb", () => {
   it("migrates a fresh database and is idempotent", () => {
     const db = freshDb();
-    expect(prepareLocalDb(db)).toBe(1);
+    expect(prepareLocalDb(db)).toBe(2);
     expect(db.get<{ code: string }>("SELECT code FROM disc_status WHERE code = 'available'")).toBeDefined();
   });
 });

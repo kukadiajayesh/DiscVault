@@ -22,8 +22,6 @@ export const ArchiveDisc = z.object({
   title: z.string().nullable().default(null),
   media_type: z.string().nullable().default(null),
   status: z.string().default("available"),
-  location_id: z.string().nullable().default(null),
-  location_slot: z.string().nullable().default(null),
   notes: z.string().nullable().default(null),
   meta: z.string().nullable().default(null),
   created_at: z.string(),

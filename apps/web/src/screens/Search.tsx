@@ -18,8 +18,6 @@ interface Row {
   ext: string | null;
   sizeKb: number | null;
   created: string | null;
-  location: string | null;
-  locationSlot: string | null;
 }
 
 function toRow(kind: "file" | "folder", h: FileHit | FolderHit): Row {
@@ -33,8 +31,6 @@ function toRow(kind: "file" | "folder", h: FileHit | FolderHit): Row {
     ext: "ext" in h ? h.ext : null,
     sizeKb: h.size_kb,
     created: h.created,
-    location: h.location,
-    locationSlot: h.location_slot,
   };
 }
 
@@ -462,18 +458,6 @@ export default function Search() {
                         >
                           #{r.disc}
                         </span>
-                        <span
-                          style={{
-                            minWidth: 0,
-                            font: "400 11px/1 'JetBrains Mono', monospace",
-                            color: "var(--dv-text-2)",
-                            overflow: "hidden",
-                            textOverflow: "ellipsis",
-                            whiteSpace: "nowrap",
-                          }}
-                        >
-                          {r.location ?? r.locationSlot ?? ""}
-                        </span>
                       </span>
                       <span
                         style={{
@@ -525,9 +509,6 @@ export default function Search() {
                       }}
                     >
                       #{disc}
-                    </span>
-                    <span className="dv-mono" style={{ fontSize: 12, color: "var(--dv-text-2)" }}>
-                      {rows[0]?.location ?? rows[0]?.locationSlot ?? ""}
                     </span>
                     <span className="dv-mono" style={{ fontSize: 11, color: "var(--dv-text-3)" }}>
                       · {rows.length} match{rows.length === 1 ? "" : "es"}
@@ -641,9 +622,6 @@ export default function Search() {
               }}
             >
               #{drawerRow.disc}
-            </span>
-            <span style={{ font: "600 15px/1.3 'Instrument Sans', system-ui, sans-serif", color: "var(--dv-text-2)" }}>
-              {drawerRow.location ?? drawerRow.locationSlot ?? "Unknown location"}
             </span>
           </div>
           <span style={{ font: "700 18px/1.3 'Instrument Sans', system-ui, sans-serif", wordBreak: "break-word" }}>{drawerRow.name}</span>

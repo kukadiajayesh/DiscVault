@@ -27,7 +27,6 @@ export default function Scan() {
   const [discNoInput, setDiscNoInput] = useState(presetDisc != null ? String(presetDisc) : "");
   const [title, setTitle] = useState("");
   const [mediaType, setMediaType] = useState(MEDIA_TYPES[0]!);
-  const [locationSlot, setLocationSlot] = useState("");
 
   const [dirName, setDirName] = useState<string | null>(null);
   const [dirHandle, setDirHandle] = useState<FileSystemDirectoryHandle | null>(null);
@@ -56,7 +55,6 @@ export default function Scan() {
     if (d) {
       setTitle(d.title ?? "");
       setMediaType(d.media_type ?? MEDIA_TYPES[0]!);
-      setLocationSlot(d.location_slot ?? "");
     }
   }, [mode, discQuery.data, existing]);
 
@@ -104,7 +102,7 @@ export default function Scan() {
     try {
       const result = await vaultWorker().commitScannedPack(
         discNo,
-        { title: title || null, media_type: mediaType, location_slot: locationSlot || null, status: "available" },
+        { title: title || null, media_type: mediaType, status: "available" },
         scanResult.folders,
         scanResult.files,
       );
@@ -280,15 +278,6 @@ export default function Scan() {
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
                 placeholder="Movies — Van Helsing & Constantine"
-                style={fieldInput}
-              />
-            </label>
-            <label style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-              <span style={fieldLabel}>Location</span>
-              <input
-                value={locationSlot}
-                onChange={(e) => setLocationSlot(e.target.value)}
-                placeholder="Living room · Shelf A · Wallet 1, page 5"
                 style={fieldInput}
               />
             </label>

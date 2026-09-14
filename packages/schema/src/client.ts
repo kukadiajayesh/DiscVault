@@ -1,6 +1,6 @@
 import { SYNCED_TABLE_INDEXES, SYNCED_TABLES, syncedTableDDL } from "@discvault/sync-protocol";
-import { CATEGORIES, DISC_STATUSES, FILE_CATEGORY_DEFAULTS, insertRows, LOCATION_KINDS, MEDIA_TYPES } from "./seeds.js";
-import type { Migration } from "./sql-db.js";
+import { CATEGORIES, DISC_STATUSES, FILE_CATEGORY_DEFAULTS, insertRows, MEDIA_TYPES } from "./seeds.js";
+import type { Migration, SqlDb } from "./sql-db.js";
 
 /**
  * Local database on each device (§9.1). One file per vault (`vault-{vault_id}.sqlite3`), so no
@@ -14,11 +14,9 @@ export const CLIENT_MIGRATIONS: Migration[] = [
       // ── Lookup tables ──────────────────────────────────────────────────────
       "CREATE TABLE media_type (code TEXT PRIMARY KEY, label TEXT NOT NULL, capacity_kb INTEGER, sort_order INTEGER)",
       "CREATE TABLE disc_status (code TEXT PRIMARY KEY, label TEXT NOT NULL)",
-      "CREATE TABLE location_kind (code TEXT PRIMARY KEY, label TEXT NOT NULL)",
       "CREATE TABLE category (code TEXT PRIMARY KEY, label TEXT NOT NULL, icon TEXT)",
       ...insertRows("media_type", MEDIA_TYPES),
       ...insertRows("disc_status", DISC_STATUSES),
-      ...insertRows("location_kind", LOCATION_KINDS),
       ...insertRows("category", CATEGORIES),
 
       // ── User metadata (synced row by row) ────────────────────────────────
@@ -70,8 +68,6 @@ export const CLIENT_MIGRATIONS: Migration[] = [
       "CREATE TABLE file_category (ext TEXT PRIMARY KEY, category TEXT NOT NULL REFERENCES category(code))",
       ...insertRows("file_category", FILE_CATEGORY_DEFAULTS),
       "CREATE TABLE search_history (id INTEGER PRIMARY KEY, query_json TEXT, result_count INTEGER, at TEXT)",
-      "CREATE TABLE stats_cache (key TEXT PRIMARY KEY, value_json TEXT, refreshed_at TEXT)",
-      "CREATE TABLE dup_cache (match_key TEXT, file_id INTEGER, copies INTEGER, wasted_kb INTEGER)",
 
       // ── Sync engine ────────────────────────────────────────────────────────
       "CREATE TABLE sync_state (key TEXT PRIMARY KEY, value TEXT)",
@@ -114,4 +110,29 @@ export const CLIENT_MIGRATIONS: Migration[] = [
       )`,
     ],
   },
+  {
+    // Duplicates/Statistics/Collections/Locations/Data health dropped (never built past the nav
+    // stub): removes their tables, disc's location columns, and the unused stats/dup caches.
+    // A fresh device's v1 already omits all of this, so the column drops are conditional.
+    version: 2,
+    name: "drop_phase4_stubs",
+    statements: [
+      // SQLite refuses to drop an indexed column, so the old index has to go first.
+      "DROP INDEX IF EXISTS disc_location_idx",
+      "DROP TABLE IF EXISTS location",
+      "DROP TABLE IF EXISTS collection",
+      "DROP TABLE IF EXISTS collection_item",
+      "DROP TABLE IF EXISTS borrower",
+      "DROP TABLE IF EXISTS loan",
+      "DROP TABLE IF EXISTS location_kind",
+      "DROP TABLE IF EXISTS stats_cache",
+      "DROP TABLE IF EXISTS dup_cache",
+    ],
+    run: (db) => dropColumnsIfPresent(db, "disc", ["location_id", "location_slot"]),
+  },
 ];
+
+function dropColumnsIfPresent(db: SqlDb, table: string, columns: string[]): void {
+  const existing = new Set(db.all<{ name: string }>(`PRAGMA table_info(${table})`).map((c) => c.name));
+  for (const column of columns) if (existing.has(column)) db.exec(`ALTER TABLE ${table} DROP COLUMN ${column}`);
+}

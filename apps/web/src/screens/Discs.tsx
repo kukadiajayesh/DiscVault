@@ -27,15 +27,8 @@ export default function Discs() {
 
   const [view, setView] = useState<"table" | "grid">("table");
   const [jump, setJump] = useState("");
-  const [location, setLocation] = useState("Any location");
   const [status, setStatus] = useState("Any status");
   const [sort, setSort] = useState<SortKey>("no");
-
-  const locations = useMemo(() => {
-    const set = new Set<string>();
-    for (const d of discsQuery.data ?? []) if (d.location_name) set.add(d.location_name);
-    return [...set].sort();
-  }, [discsQuery.data]);
 
   const statuses = useMemo(() => {
     const set = new Set<string>();
@@ -45,7 +38,6 @@ export default function Discs() {
 
   const rows = useMemo(() => {
     let list = discsQuery.data ?? [];
-    if (location !== "Any location") list = list.filter((d) => d.location_name === location);
     if (status !== "Any status") list = list.filter((d) => d.status === status);
     const sorted = [...list];
     sorted.sort((a, b) => {
@@ -55,7 +47,7 @@ export default function Discs() {
       return a.disc_no - b.disc_no;
     });
     return sorted;
-  }, [discsQuery.data, location, status, sort]);
+  }, [discsQuery.data, status, sort]);
 
   const onJumpKey = (e: KeyboardEvent<HTMLInputElement>) => {
     if (e.key !== "Enter") return;
@@ -106,12 +98,6 @@ export default function Discs() {
               style={{ width: 48, border: 0, background: "transparent", outline: "none", font: "400 13px/1 'JetBrains Mono', monospace" }}
             />
           </div>
-          <select value={location} onChange={(e) => setLocation(e.target.value)} style={selectStyle}>
-            <option>Any location</option>
-            {locations.map((l) => (
-              <option key={l}>{l}</option>
-            ))}
-          </select>
           <select value={status} onChange={(e) => setStatus(e.target.value)} style={selectStyle}>
             <option>Any status</option>
             {statuses.map((s) => (
@@ -163,7 +149,7 @@ export default function Discs() {
             <div
               style={{
                 display: "grid",
-                gridTemplateColumns: "64px 1.3fr 74px 64px 64px 70px 110px 170px 92px 92px 96px 84px",
+                gridTemplateColumns: "64px 1.3fr 74px 64px 64px 70px 110px 92px 92px 96px 84px",
                 gap: 10,
                 alignItems: "center",
                 padding: "0 14px",
@@ -183,7 +169,6 @@ export default function Discs() {
               <span>Folders</span>
               <span style={{ textAlign: "right" }}>Size</span>
               <span>% full</span>
-              <span>Location</span>
               <span>Status</span>
               <span>Scanned</span>
               <span>Updated</span>
@@ -199,7 +184,7 @@ export default function Discs() {
                   style={{
                     display: "grid",
                     width: "100%",
-                    gridTemplateColumns: "64px 1.3fr 74px 64px 64px 70px 110px 170px 92px 92px 96px 84px",
+                    gridTemplateColumns: "64px 1.3fr 74px 64px 64px 70px 110px 92px 92px 96px 84px",
                     gap: 10,
                     alignItems: "center",
                     padding: "0 14px",
@@ -254,18 +239,6 @@ export default function Discs() {
                       {Math.round(pct)}%
                     </span>
                   </span>
-                  <span
-                    style={{
-                      minWidth: 0,
-                      font: "400 11px/1 'JetBrains Mono', monospace",
-                      color: "var(--dv-text-3)",
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                      whiteSpace: "nowrap",
-                    }}
-                  >
-                    {d.location_name ?? d.location_slot ?? "—"}
-                  </span>
                   <Pill label={statusLabel(d.status)} tone={statusTone(d.status)} />
                   <span className="dv-mono" style={{ fontSize: 11, color: "var(--dv-text-3)" }}>
                     {d.scanned_at ? formatDate(d.scanned_at) : "Never"}
@@ -284,7 +257,7 @@ export default function Discs() {
                 key={n}
                 style={{
                   display: "grid",
-                  gridTemplateColumns: "64px 1.3fr 74px 64px 64px 70px 110px 170px 92px 92px 96px 84px",
+                  gridTemplateColumns: "64px 1.3fr 74px 64px 64px 70px 110px 92px 92px 96px 84px",
                   gap: 10,
                   alignItems: "center",
                   padding: "0 14px",
@@ -306,7 +279,6 @@ export default function Discs() {
                   #{n}
                 </span>
                 <span style={{ font: "400 13px/1.3 'Instrument Sans', system-ui, sans-serif", fontStyle: "italic" }}>Never scanned</span>
-                <span />
                 <span />
                 <span />
                 <span />
@@ -382,12 +354,6 @@ export default function Discs() {
                   }}
                 >
                   {d.title ?? d.label ?? "Untitled"}
-                </span>
-                <span
-                  className="dv-mono"
-                  style={{ fontSize: 11, color: "var(--dv-text-3)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
-                >
-                  {d.location_name ?? d.location_slot ?? "—"}
                 </span>
                 <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
                   <span style={{ flex: 1 }}>

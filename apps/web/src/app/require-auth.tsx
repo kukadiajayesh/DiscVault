@@ -4,7 +4,7 @@ import { useSession } from "./session.js";
 
 /** Every in-app route (§8 "App shell on every screen") needs a signed-in session. */
 export function RequireAuth({ children }: { children: ReactNode }) {
-  const { status, retry } = useSession();
+  const { status, error, retry } = useSession();
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -25,6 +25,20 @@ export function RequireAuth({ children }: { children: ReactNode }) {
         style={{ minHeight: "100vh", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 12 }}
       >
         <span style={{ font: "600 15px/1.2 'Instrument Sans', system-ui, sans-serif" }}>Couldn't reach DiscVault</span>
+        {error && (
+          <span
+            style={{
+              maxWidth: 480,
+              padding: "0 16px",
+              textAlign: "center",
+              overflowWrap: "anywhere",
+              color: "var(--dv-text-3)",
+              font: "400 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace",
+            }}
+          >
+            {error}
+          </span>
+        )}
         <button
           type="button"
           onClick={retry}

@@ -32,16 +32,7 @@ const NAV_PRIMARY: NavItem[] = [
   { label: "Settings", icon: "Settings", ...SETTINGS_LINK },
 ];
 
-// Position in the information architecture is set even though most of these screens are stubs
-// until phase 4 (§8, items 8 and 10-14) — see the Stub screen.
-const NAV_SECONDARY: NavItem[] = [
-  { label: "Sync & storage", icon: "Sync", to: "/sync" },
-  { label: "Duplicates", icon: "Duplicates", to: "/duplicates" },
-  { label: "Statistics", icon: "Stats", to: "/stats" },
-  { label: "Collections", icon: "Collections", to: "/collections" },
-  { label: "Locations", icon: "Locations", to: "/locations" },
-  { label: "Data health", icon: "Health", to: "/health" },
-];
+const NAV_SECONDARY: NavItem[] = [{ label: "Sync & storage", icon: "Sync", to: "/sync" }];
 
 const PHONE_TABS: NavItem[] = [
   { label: "Home", icon: "Home", to: "/" },

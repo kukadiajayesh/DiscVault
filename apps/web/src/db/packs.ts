@@ -80,7 +80,6 @@ export function importPackParts(db: SqlDb, discNo: number, packHash: string, par
 export interface ScannedDiscMeta {
   title: string | null;
   media_type: string | null;
-  location_slot: string | null;
   status: string;
   notes?: string | null;
 }
@@ -114,7 +113,6 @@ export async function commitScannedPack(
       title: meta.title,
       media_type: meta.media_type,
       status: meta.status,
-      location_slot: meta.location_slot,
       notes: meta.notes ?? null,
     });
     db.run(

@@ -22,8 +22,6 @@ interface DiscRow {
   title: string | null;
   media_type: string | null;
   status: string;
-  location_id: string | null;
-  location_slot: string | null;
   notes: string | null;
   meta: string | null;
   created_at: string;
@@ -66,8 +64,6 @@ export async function exportArchive(
       title: disc.title,
       media_type: disc.media_type,
       status: disc.status,
-      location_id: disc.location_id,
-      location_slot: disc.location_slot,
       notes: disc.notes,
       meta: disc.meta,
       created_at: disc.created_at,

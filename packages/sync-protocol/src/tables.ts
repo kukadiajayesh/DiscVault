@@ -29,19 +29,7 @@ export interface SyncedTableDef {
   columns: Record<string, ColumnDef>;
 }
 
-export const SYNCED_TABLE_NAMES = [
-  "location",
-  "disc",
-  "tag",
-  "tag_link",
-  "collection",
-  "collection_item",
-  "item_note",
-  "saved_search",
-  "borrower",
-  "loan",
-  "category_override",
-] as const;
+export const SYNCED_TABLE_NAMES = ["disc", "tag", "tag_link", "item_note", "saved_search", "category_override"] as const;
 
 export type SyncedTableName = (typeof SYNCED_TABLE_NAMES)[number];
 
@@ -49,20 +37,6 @@ export type SyncedTableName = (typeof SYNCED_TABLE_NAMES)[number];
 export const SYSTEM_COLUMNS = ["created_at", "updated_at", "deleted_at", "version"] as const;
 
 export const SYNCED_TABLES: Record<SyncedTableName, SyncedTableDef> = {
-  location: {
-    name: "location",
-    primaryKey: "id",
-    primaryKeyType: "text",
-    primaryKeyKind: "uuid",
-    columns: {
-      parent_id: { type: "text", references: "location" },
-      name: { type: "text", required: true },
-      kind: { type: "text", required: true, default: "box" },
-      capacity: { type: "integer" },
-      sort_order: { type: "integer", default: 0 },
-      meta: { type: "json" },
-    },
-  },
   disc: {
     name: "disc",
     primaryKey: "disc_no",
@@ -73,8 +47,6 @@ export const SYNCED_TABLES: Record<SyncedTableName, SyncedTableDef> = {
       title: { type: "text" },
       media_type: { type: "text" },
       status: { type: "text", required: true, default: "available" },
-      location_id: { type: "text", references: "location" },
-      location_slot: { type: "text" },
       notes: { type: "text" },
       meta: { type: "json" },
       folder_count: { type: "integer", required: true, default: 0, serverOnly: true },
@@ -108,29 +80,6 @@ export const SYNCED_TABLES: Record<SyncedTableName, SyncedTableDef> = {
       item_key: { type: "text", required: true, itemKey: true },
     },
   },
-  collection: {
-    name: "collection",
-    primaryKey: "id",
-    primaryKeyType: "text",
-    primaryKeyKind: "uuid",
-    columns: {
-      parent_id: { type: "text", references: "collection" },
-      name: { type: "text", required: true },
-      description: { type: "text" },
-      sort_order: { type: "integer", default: 0 },
-    },
-  },
-  collection_item: {
-    name: "collection_item",
-    primaryKey: "id",
-    primaryKeyType: "text",
-    primaryKeyKind: "uuid",
-    columns: {
-      collection_id: { type: "text", required: true, references: "collection" },
-      item_key: { type: "text", required: true, itemKey: true },
-      sort_order: { type: "integer", default: 0 },
-    },
-  },
   item_note: {
     name: "item_note",
     primaryKey: "item_key",
@@ -149,30 +98,6 @@ export const SYNCED_TABLES: Record<SyncedTableName, SyncedTableDef> = {
       name: { type: "text", required: true },
       query_json: { type: "json", required: true },
       pinned: { type: "integer", default: 0 },
-    },
-  },
-  borrower: {
-    name: "borrower",
-    primaryKey: "id",
-    primaryKeyType: "text",
-    primaryKeyKind: "uuid",
-    columns: {
-      name: { type: "text", required: true },
-      contact: { type: "text" },
-    },
-  },
-  loan: {
-    name: "loan",
-    primaryKey: "id",
-    primaryKeyType: "text",
-    primaryKeyKind: "uuid",
-    columns: {
-      disc_no: { type: "integer", required: true, references: "disc" },
-      borrower_id: { type: "text", required: true, references: "borrower" },
-      loaned_at: { type: "text", required: true },
-      due_at: { type: "text" },
-      returned_at: { type: "text" },
-      notes: { type: "text" },
     },
   },
   category_override: {
@@ -221,8 +146,4 @@ export const SYNCED_TABLE_INDEXES = [
   ...SYNCED_TABLE_NAMES.map((t) => `CREATE INDEX IF NOT EXISTS ${t}_version_idx ON ${t} (version)`),
   "CREATE INDEX IF NOT EXISTS tag_link_item_idx ON tag_link (item_key)",
   "CREATE INDEX IF NOT EXISTS tag_link_tag_idx ON tag_link (tag_id)",
-  "CREATE INDEX IF NOT EXISTS collection_item_item_idx ON collection_item (item_key)",
-  "CREATE INDEX IF NOT EXISTS collection_item_collection_idx ON collection_item (collection_id)",
-  "CREATE INDEX IF NOT EXISTS loan_disc_idx ON loan (disc_no)",
-  "CREATE INDEX IF NOT EXISTS disc_location_idx ON disc (location_id)",
 ];

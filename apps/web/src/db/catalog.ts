@@ -6,9 +6,6 @@ export interface DiscListItem {
   title: string | null;
   media_type: string | null;
   status: string;
-  location_id: string | null;
-  location_slot: string | null;
-  location_name: string | null;
   folder_count: number;
   file_count: number;
   total_kb: number;
@@ -16,13 +13,12 @@ export interface DiscListItem {
   updated_at: string;
 }
 
-/** Disc library table (§8.5): every non-deleted disc, joined to its location name. */
+/** Disc library table (§8.5): every non-deleted disc. */
 export function listDiscs(db: SqlDb): DiscListItem[] {
   return db.all<DiscListItem>(
-    `SELECT d.disc_no, d.label, d.title, d.media_type, d.status, d.location_id, d.location_slot,
-            l.name AS location_name, d.folder_count, d.file_count, d.total_kb, d.scanned_at, d.updated_at
+    `SELECT d.disc_no, d.label, d.title, d.media_type, d.status,
+            d.folder_count, d.file_count, d.total_kb, d.scanned_at, d.updated_at
      FROM disc d
-     LEFT JOIN location l ON l.id = d.location_id AND l.deleted_at IS NULL
      WHERE d.deleted_at IS NULL
      ORDER BY d.disc_no`,
   );
@@ -47,10 +43,9 @@ export interface DiscDetail extends DiscListItem {
 
 export function getDisc(db: SqlDb, discNo: number): DiscDetail | undefined {
   return db.get<DiscDetail>(
-    `SELECT d.disc_no, d.label, d.title, d.media_type, d.status, d.location_id, d.location_slot,
-            l.name AS location_name, d.folder_count, d.file_count, d.total_kb, d.scanned_at, d.updated_at, d.notes, d.meta
+    `SELECT d.disc_no, d.label, d.title, d.media_type, d.status,
+            d.folder_count, d.file_count, d.total_kb, d.scanned_at, d.updated_at, d.notes, d.meta
      FROM disc d
-     LEFT JOIN location l ON l.id = d.location_id AND l.deleted_at IS NULL
      WHERE d.disc_no = ? AND d.deleted_at IS NULL`,
     [discNo],
   );

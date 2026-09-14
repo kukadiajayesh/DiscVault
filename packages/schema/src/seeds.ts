@@ -16,14 +16,6 @@ export const DISC_STATUSES = [
   { code: "retired", label: "Retired" },
 ];
 
-export const LOCATION_KINDS = [
-  { code: "room", label: "Room" },
-  { code: "shelf", label: "Shelf" },
-  { code: "box", label: "Box" },
-  { code: "binder", label: "Binder" },
-  { code: "wallet", label: "Wallet" },
-];
-
 export const CATEGORIES = [
   { code: "video", label: "Video", icon: "film" },
   { code: "audio", label: "Audio", icon: "music" },

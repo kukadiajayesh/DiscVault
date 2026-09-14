@@ -356,20 +356,6 @@ export default function Dashboard() {
                     >
                       {d.title ?? d.label ?? `Disc ${d.disc_no}`}
                     </span>
-                    <span
-                      style={{
-                        flex: "1 1 auto",
-                        minWidth: 0,
-                        textAlign: "right",
-                        font: "400 12px/1 'JetBrains Mono', monospace",
-                        color: "var(--dv-text-3)",
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                        whiteSpace: "nowrap",
-                      }}
-                    >
-                      {d.location_name ?? d.location_slot ?? ""}
-                    </span>
                   </button>
                 ))
               )}

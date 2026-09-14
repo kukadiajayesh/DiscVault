@@ -1,5 +1,5 @@
 import { SYNCED_TABLE_INDEXES, SYNCED_TABLES, syncedTableDDL } from "@discvault/sync-protocol";
-import type { Migration } from "./sql-db.js";
+import type { Migration, SqlDb } from "./sql-db.js";
 
 /**
  * One vault's database, inside its SQLite-backed Durable Object (§9.2). The whole database belongs
@@ -52,4 +52,26 @@ export const VAULT_MIGRATIONS: Migration[] = [
       "CREATE TABLE vault_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)",
     ],
   },
+  {
+    // Duplicates/Statistics/Collections/Locations/Data health dropped (never built past the nav
+    // stub): removes their tables and disc's location columns. A vault created after this change
+    // already omits all of this in v1, so the column drops are conditional.
+    version: 2,
+    name: "drop_phase4_stubs",
+    statements: [
+      // SQLite refuses to drop an indexed column, so the old index has to go first.
+      "DROP INDEX IF EXISTS disc_location_idx",
+      "DROP TABLE IF EXISTS location",
+      "DROP TABLE IF EXISTS collection",
+      "DROP TABLE IF EXISTS collection_item",
+      "DROP TABLE IF EXISTS borrower",
+      "DROP TABLE IF EXISTS loan",
+    ],
+    run: (db) => dropColumnsIfPresent(db, "disc", ["location_id", "location_slot"]),
+  },
 ];
+
+function dropColumnsIfPresent(db: SqlDb, table: string, columns: string[]): void {
+  const existing = new Set(db.all<{ name: string }>(`PRAGMA table_info(${table})`).map((c) => c.name));
+  for (const column of columns) if (existing.has(column)) db.exec(`ALTER TABLE ${table} DROP COLUMN ${column}`);
+}
