@@ -100,7 +100,7 @@ Why this suits DiscVault:
 | Disc packs | **Workers KV Free**, keys prefixed by vault (`v:{vault_id}:pack:…`) | 1 GB storage, 25 MiB max per value, no card needed, and it **stops at the limit instead of billing**. Packs never change and are named by content hash, so KV's eventual consistency doesn't matter. |
 | ~~R2~~ | **Not used** | R2 needs a payment method to enable and bills past its free allowance, which breaks the "never billed" rule. |
 | Auth | **Google sign-in only**, through **Better Auth** with just its Google provider enabled (OAuth code flow + PKCE). No passwords, no GitHub, no passkeys. A user is identified by Google's stable account id (`sub`), not by email. A signed session cookie cache carries `user_id` + `vault_id`, so most requests don't read D1. | One provider keeps the account model simple: **1 Google account = 1 user = 1 vault**. OAuth fits the Free plan's **10 ms CPU per request**; password hashing doesn't. Only the `openid email profile` scopes are requested and the app never calls other Google APIs. Long sessions keep the app usable offline. |
-| Backups | **GitHub Actions** (free scheduled workflow): `wrangler d1 export` for the directory, an operator-only export for each vault that changed, plus new packs → commits to a **private backup repo** | Cron Triggers also have only 10 ms CPU, too little for exports. Actions use a few minutes a day. |
+| Backups | **GitHub Actions** (free scheduled workflow): `wrangler d1 export` for the directory, a token-gated export for each vault that changed, plus new packs → commits to a **private backup repo** | Cron Triggers also have only 10 ms CPU, too little for exports. Actions use a few minutes a day. |
 | Point-in-time restore | **Durable Object PITR** (30 days, per vault) and **D1 Time Travel** (7 days) for the directory | Undoes a bad sync or accidental delete for **one user** without touching anyone else. |
 | Clean-up | Workers Cron Trigger (1 of 5 free) deletes queued KV keys (replaced packs, deleted accounts). Old change-log rows are pruned inside each vault during pushes. | Small batches fit easily in 10 ms CPU, and the cron never has to visit every vault. |
 
@@ -143,13 +143,12 @@ any user gets (§3.7).
 ### 3.1 Account model
 ```
 Google account ──1:1── user ──owns── vault ══ one VaultDO (SQLite)  +  KV prefix v:{vault_id}:
-                         │             │
-                         ├─< session   └─< vault_member (just the owner today; editor/viewer later)
+                         │
+                         ├─< session
                          └─< device
 ```
-- **User**: created on the first Google sign-in. Keyed by Google's `sub`, which never changes, and requires `email_verified`. Name, email and picture are refreshed from Google on each sign-in.
-- **Vault**: the unit of data scope. Every user gets **exactly one personal vault**, created in the same step as the user. All catalog data (metadata, change log, packs, quotas, usage) belongs to a vault, not directly to a user. The UI calls it "your catalog".
-- **Why vaults are separate from users**: sharing a catalog later (a family catalog, a read-only viewer) only means adding `vault_member` rows and a vault picker. No data has to move. Until then, members = owner only.
+- **User**: created on the first Google sign-in. Keyed by Google's `sub`, which never changes, and requires `email_verified`. Name, email and picture are refreshed from Google on each sign-in. There is one class of end user — no roles, no membership list.
+- **Vault**: the unit of data scope. Every user gets **exactly one personal vault**, created in the same step as the user, owned by that user alone. All catalog data (metadata, change log, packs, quotas, usage) belongs to a vault, not directly to a user. The UI calls it "your catalog".
 
 ### 3.2 Why one database per vault
 | Option | Verdict |
@@ -164,8 +163,8 @@ Google account ──1:1── user ──owns── vault ══ one VaultDO (S
 2. The Worker runs the OAuth code flow with PKCE and `state`, scopes `openid email profile`, and no offline access (no Google refresh token is needed, because the app never calls Google APIs).
 3. On the callback, Better Auth verifies Google's ID token and looks up the account by `sub`.
    - **Known account**: new session.
-   - **New account**: check sign-up mode and the user cap (§3.5), then create `user`, `account`, `vault` and `vault_member (owner)` in **one D1 batch**. The vault's Durable Object is created lazily on its first request.
-4. The session cookie is `HttpOnly; Secure; SameSite=Lax` with a 90-day sliding expiry. Its signed cache holds `{user_id, vault_id, role}` and is refreshed from D1 every 5 minutes, so revoking a device takes effect within 5 minutes.
+   - **New account**: check sign-up mode and the user cap (§3.5), then create `user`, `account` and `vault` in **one D1 batch**. The vault's Durable Object is created lazily on its first request.
+4. The session cookie is `HttpOnly; Secure; SameSite=Lax` with a 90-day sliding expiry. Its signed cache holds `{user_id, vault_id}` and is refreshed from D1 every 5 minutes, so revoking a device takes effect within 5 minutes.
 5. The app saves the profile and `vault_id` on the device so it opens offline later.
 
 **Enforcement rules (server)**
@@ -174,7 +173,7 @@ Google account ──1:1── user ──owns── vault ══ one VaultDO (S
 3. **Pack keys are built on the server**: `v:{vault_id}:pack:{disc_no}:{sha256}:{part}`. The client sends only disc, hash and part (checked against a strict pattern), and the server verifies the hash on upload. The same pack in two vaults is stored twice on purpose, so a hash never reveals what another user owns.
 4. **Not found, never forbidden**: anything outside your vault returns `404`, so its existence isn't revealed.
 5. **CSRF**: write routes require the `DV-Protocol` header, which forces a CORS preflight that the Worker refuses for other origins, on top of `SameSite` cookies.
-6. **Operator routes** (`/ops/*`) are separate. The backup workflow uses a secret token. Accounts listed in `OPERATOR_SUBS` can change sign-up settings and see user counts and usage, **but not catalog contents**.
+6. **Operator routes** (`/ops/*`) are separate and never tied to a user account: every one of them (backups, sign-up settings, invites, user counts and usage, quotas) requires the shared `OPS_TOKEN` bearer secret. No signed-in account has elevated access, and none can see another user's catalog contents.
 7. **Isolation test suite** in CI: Miniflare creates users A and B, and every endpoint called as B must return `404` or empty results for A's discs, packs, changes, devices and usage.
 
 ### 3.4 Per-user data on devices
@@ -557,8 +556,8 @@ detail).
 - **Preferences**: theme, size units (binary or decimal), date format, default search scope, show or hide drive letter, sync interval, **Lite mode** (smaller search index for phones), **Local-only mode** (sync off), "sync only on Wi-Fi" when available.
 - **Categories**: map extensions to categories, with a list of unmapped extensions sorted by count.
 - **Import & export**: **Import archive** (`.dvault`, always into your own catalog), export as `.dvault`, CSV zip or SQLite file.
-- **Sharing**: not in the MVP. The vault/member model (§3.1) leaves room for Editor and Viewer members later.
-- **Operator** (only accounts in `OPERATOR_SUBS`): sign-up mode, user cap, invites, and shared free-tier usage. No access to other users' catalogs.
+- **Sharing**: not supported. Each vault has exactly one owner and no member list (§3.1).
+- No in-app admin surface: sign-up mode, user cap, invites, and shared free-tier usage are managed outside the app via the `OPS_TOKEN`-gated `/ops/*` routes (§3.3.6), not through any account.
 
 ### 10. Duplicate finder (after MVP, phase 4)
 - **Match on**: name + size (default), name, size, or name + size + date. Files or folders.
@@ -732,14 +731,6 @@ CREATE TABLE vault (
 -- One personal vault per user for now; dropping this index later allows more.
 CREATE UNIQUE INDEX vault_owner_idx ON vault (owner_id) WHERE deleted_at IS NULL;
 
-CREATE TABLE vault_member (
-    vault_id    TEXT NOT NULL REFERENCES vault(id),
-    user_id     TEXT NOT NULL REFERENCES user(id),
-    role        TEXT NOT NULL DEFAULT 'owner',       -- 'owner' today; 'editor' / 'viewer' later
-    created_at  TEXT NOT NULL,
-    PRIMARY KEY (vault_id, user_id)
-);
-
 CREATE TABLE device (id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES user(id),
                      vault_id TEXT NOT NULL REFERENCES vault(id),
                      name TEXT, last_seen_at TEXT, revoked_at TEXT);   -- last_seen_at updated at most hourly
@@ -800,7 +791,7 @@ CREATE TABLE pack_reservation (kv_key TEXT PRIMARY KEY, bytes INTEGER NOT NULL,
 ### 9.4 Relationships
 ```
 ── Directory (D1) ────────────────────────────────────────────────────────────
-user ─< session · user ─< device · user ─owns─ vault ─< vault_member >─ user
+user ─< session · user ─< device · user ─owns─ vault (one owner each, no member list)
 vault ══ one VaultDO (SQLite) + KV keys v:{vault_id}:…     ← the per-user scope
 
 ── Inside one vault (VaultDO on the server, vault-{id}.sqlite3 on devices) ──
@@ -859,8 +850,8 @@ No route accepts a vault id from the client (§3.3).
 | `GET /packs/:disc/:hash/:part` | Download one part, streamed from KV with `Cache-Control: immutable`. |
 | `GET /usage` | This vault's usage today vs. its quotas, and whether a shared free limit is paused. Shown on the Sync screen. |
 | `GET /devices` · `DELETE /devices/:id` | Manage your own devices |
-| `GET /ops/usage` · `PUT /ops/config` · `POST /ops/invites` | Operator accounts only: user count, shared usage, sign-up mode, user cap, invites. No catalog contents. |
-| `GET /ops/vaults` · `GET /ops/vaults/:id/export?page=` | Backup workflow only (secret token): list vaults, then a paged SQL export of one vault. Returns `304` if the vault hasn't changed since the last backup. |
+| `GET /ops/usage` · `PUT /ops/config` · `POST /ops/invites` | Ops token only (`OPS_TOKEN` bearer): user count, shared usage, sign-up mode, user cap, invites. No catalog contents. |
+| `GET /ops/vaults` · `GET /ops/vaults/:id/export?page=` | Ops token only: list vaults, then a paged SQL export of one vault. Returns `304` if the vault hasn't changed since the last backup. |
 
 **Daily Worker cron** (1 of 5 free): deletes up to 900 due keys from `purge_queue` (pack parts replaced
 more than 30 days ago, and packs of deleted accounts). Old change-log rows are pruned **inside each
@@ -917,7 +908,7 @@ DiscVault/
 | **0. Spike (1 week)** | Load the real 345K rows into SQLite WASM + OPFS on Chrome, Safari (iOS) and Firefox. Measure first sync, index build and search time. Deploy a hello-world Worker + D1 + a SQLite Durable Object + KV on a Cloudflare account **with no payment method**, create a few test vaults, and confirm every binding works, 10 ms Worker CPU is enough for push and pack streaming, a paged vault export works, and point-in-time recovery restores a test vault. | Search stays under ~50 ms on a mid-range phone, the DB survives a browser restart, and nothing in the stack asks for a card. |
 | **1. Local core** | Monorepo, schemas, legacy archive builder (`.dvault`), local archive import, local DB worker, PWA shell, screens 3–6 + A, B, C | App installs, loads the catalog from the legacy archive, and search and browse work with the network off. |
 | **2. Accounts & sync** | Google sign-in, vault provisioning, `VaultDO`, per-vault local DB files, quotas and sign-up guards, isolation test suite, bootstrap, pack sync, outbox push/pull, limit handling (429 → paused), GitHub backup workflow (directory + per-vault exports), screens 1, 2, 8, 9, F | Two devices on one Google account edit offline, reconnect, and end up the same. **A second Google account sees none of the first account's data** (isolation suite passes). A simulated daily-limit error pauses sync without breaking the app. Playwright offline tests pass. |
-| **2b. Import & owner onboarding** | In-app `.dvault` import and export, account deletion, operator settings, then the owner's import (§3.8) | **Your Google account's vault shows 311 discs / 42,841 folders / 345,216 files on two devices**, a nightly backup contains it, and sign-ups can be opened. |
+| **2b. Import & owner onboarding** | In-app `.dvault` import and export, account deletion, `OPS_TOKEN`-gated sign-up settings, then the owner's import (§3.8) | **Your Google account's vault shows 311 discs / 42,841 folders / 345,216 files on two devices**, a nightly backup contains it, and sign-ups can be opened. |
 | **3. Scanning** | Scan wizard + re-scan diff (7), offline pack upload, multi-part packs | A new disc scanned offline on a laptop appears on a phone after syncing. A synthetic 500K-file scan imports in parts. |
 | **3b. Deep scan** | Archive contents, EXIF/ID3/video details, local thumbnails, opt-in thumb packs, pack `v: 2` | Re-scanning a disc makes files inside ZIPs searchable and lets you search music by artist, all offline. |
 | **4. Organize & analyse** | Screens 10–14, D, E, print labels, Lite mode, local-only mode | Feature complete. Load test with a synthetic 2,500-disc catalog. |

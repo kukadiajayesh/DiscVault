@@ -144,9 +144,8 @@ describe("account, operator and backups", () => {
     expect(unchanged.status).toBe(304);
   });
 
-  it("lets operators change sign-up settings", async () => {
-    const op = await createUser("Operator", "google-sub-operator");
-    const res = await call(op, "PUT", "/ops/config", { signupMode: "open", maxUsers: 3 });
+  it("lets the ops token change sign-up settings", async () => {
+    const res = await call(null, "PUT", "/ops/config", { signupMode: "open", maxUsers: 3 }, { Authorization: "Bearer test-ops-token" });
     expect(await res.json()).toMatchObject({ signupMode: "open", maxUsers: 3 });
     expect(await decideSignup(env as unknown as Env, "new@example.com", true)).toEqual({ ok: false, reason: "full" });
   });

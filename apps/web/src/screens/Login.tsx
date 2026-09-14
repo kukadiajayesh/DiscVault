@@ -1,5 +1,15 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { signInWithGoogle } from "../account/auth-client.js";
+
+/** Marks that a sign-in redirect to Google is under way, so a stale retry can be flagged (§3.3). */
+const SIGNIN_MARKER_KEY = "dv-signin-started";
+const SIGNIN_MARKER_TTL_MS = 5 * 60 * 1000;
+
+const AUTH_ERROR_MESSAGES: Record<string, string> = {
+  state_mismatch: "That sign-in attempt expired or was replaced by a newer one. Please try again.",
+  state_not_found: "That sign-in attempt expired. Please try again.",
+  access_denied: "Sign-in was cancelled.",
+};
 
 const GOOGLE_G = (
   <svg viewBox="0 0 18 18" width={18} height={18} aria-hidden="true">
@@ -23,13 +33,28 @@ const GOOGLE_G = (
 export default function Login() {
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [staleAttempt, setStaleAttempt] = useState(false);
+
+  useEffect(() => {
+    const code = new URLSearchParams(window.location.search).get("error");
+    if (code) {
+      sessionStorage.removeItem(SIGNIN_MARKER_KEY);
+      setError(AUTH_ERROR_MESSAGES[code] ?? "Sign-in didn't complete. Please try again.");
+      window.history.replaceState(null, "", "/login");
+      return;
+    }
+    const startedAt = Number(sessionStorage.getItem(SIGNIN_MARKER_KEY));
+    setStaleAttempt(Boolean(startedAt) && Date.now() - startedAt < SIGNIN_MARKER_TTL_MS);
+  }, []);
 
   const go = async () => {
     setPending(true);
     setError(null);
+    sessionStorage.setItem(SIGNIN_MARKER_KEY, String(Date.now()));
     try {
       await signInWithGoogle("/");
     } catch (err) {
+      sessionStorage.removeItem(SIGNIN_MARKER_KEY);
       setError(err instanceof Error ? err.message : "Sign-in failed");
       setPending(false);
     }
@@ -90,6 +115,11 @@ export default function Login() {
             </button>
             {error && (
               <span style={{ font: "500 12px/1.4 'Instrument Sans', system-ui, sans-serif", color: "var(--dv-err)" }}>{error}</span>
+            )}
+            {!error && staleAttempt && (
+              <span style={{ font: "400 12px/1.4 'Instrument Sans', system-ui, sans-serif", color: "var(--dv-text-3)" }}>
+                Already signing in on another tab? Finish there instead of starting a new attempt here.
+              </span>
             )}
             <span style={{ font: "400 12px/1.5 'Instrument Sans', system-ui, sans-serif", color: "var(--dv-text-3)" }}>
               Your catalog is private to your Google account. Nobody else can search it.

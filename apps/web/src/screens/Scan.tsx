@@ -110,8 +110,7 @@ export default function Scan() {
       );
       setSaved(result);
       await refreshStats();
-      await queryClient.invalidateQueries({ queryKey: ["discs-recent"] });
-      await queryClient.invalidateQueries({ queryKey: ["missing-discs"] });
+      await queryClient.invalidateQueries();
       setStep(4);
     } catch (err) {
       setSaveError(err instanceof Error ? err.message : "Could not save this scan");

@@ -61,7 +61,6 @@ export const AccountResponse = z.object({
     quotas: Quotas,
     usage: VaultUsage,
   }),
-  operator: z.boolean(),
 });
 export type AccountResponse = z.infer<typeof AccountResponse>;
 

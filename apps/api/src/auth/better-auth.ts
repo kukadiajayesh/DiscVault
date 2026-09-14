@@ -17,6 +17,9 @@ export function createAuth(env: Env) {
     database: env.DIRECTORY,
     trustedOrigins: [env.PUBLIC_ORIGIN],
     emailAndPassword: { enabled: false },
+    // Send OAuth failures (expired/mismatched state, denied consent, etc.) back to our own
+    // sign-in screen instead of Better Auth's generic error page.
+    onAPIError: { errorURL: `${env.PUBLIC_ORIGIN}/login` },
     socialProviders: {
       google: {
         clientId: env.GOOGLE_CLIENT_ID,

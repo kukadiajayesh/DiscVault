@@ -19,7 +19,6 @@ export default defineConfig({
                 GOOGLE_CLIENT_ID: "test",
                 GOOGLE_CLIENT_SECRET: "test",
                 OPS_TOKEN: "test-ops-token",
-                OPERATOR_SUBS: "google-sub-operator",
               },
             },
           })),

@@ -36,16 +36,11 @@ export async function decideSignup(env: Env, email: string, emailVerified: boole
   return { ok: true };
 }
 
-/** Creates the user's personal vault and owner membership. Safe to call again. */
+/** Creates the user's personal vault. Safe to call again. */
 export async function provisionVault(env: Env, userId: string, vaultId: string, email?: string): Promise<void> {
   const now = new Date().toISOString();
   const statements = [
     env.DIRECTORY.prepare("INSERT OR IGNORE INTO vault (id, owner_id, created_at) VALUES (?, ?, ?)").bind(vaultId, userId, now),
-    env.DIRECTORY.prepare("INSERT OR IGNORE INTO vault_member (vault_id, user_id, role, created_at) VALUES (?, ?, 'owner', ?)").bind(
-      vaultId,
-      userId,
-      now,
-    ),
   ];
   if (email) {
     statements.push(env.DIRECTORY.prepare("UPDATE invite SET used_at = ? WHERE email = ? AND used_at IS NULL").bind(now, email));
@@ -187,7 +182,6 @@ export async function revokeDevice(env: Env, userId: string, deviceId: string): 
 export async function deleteAccountRows(env: Env, userId: string, vaultId: string): Promise<void> {
   await env.DIRECTORY.batch([
     env.DIRECTORY.prepare("DELETE FROM device WHERE user_id = ?").bind(userId),
-    env.DIRECTORY.prepare("DELETE FROM vault_member WHERE vault_id = ?").bind(vaultId),
     env.DIRECTORY.prepare("DELETE FROM vault WHERE id = ?").bind(vaultId),
     env.DIRECTORY.prepare('DELETE FROM session WHERE "userId" = ?').bind(userId),
     env.DIRECTORY.prepare('DELETE FROM account WHERE "userId" = ?').bind(userId),

@@ -1,5 +1,8 @@
+# Overrides wrangler.jsonc's PUBLIC_ORIGIN for local dev, so Google redirects back to Vite
+# instead of the deployed site. Must also be added as an Authorized redirect URI
+# (http://localhost:5173/api/auth/callback/google) on the Google OAuth client.
+PUBLIC_ORIGIN=http://localhost:5173
 BETTER_AUTH_SECRET=replace-with-32+-random-characters
 GOOGLE_CLIENT_ID=your-client-id.apps.googleusercontent.com
 GOOGLE_CLIENT_SECRET=your-client-secret
 OPS_TOKEN=replace-with-a-long-random-token
-OPERATOR_SUBS=

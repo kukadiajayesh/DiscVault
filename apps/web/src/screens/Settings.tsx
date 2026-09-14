@@ -3,7 +3,8 @@ import { Link, useNavigate, useParams } from "@tanstack/react-router";
 import { type ChangeEvent, type ReactNode, useRef, useState } from "react";
 import { signOut as authSignOut } from "../account/auth-client.js";
 import { apiRequest } from "../account/session.js";
-import { getGeminiApiKey, setGeminiApiKey } from "../ai/gemini-key.js";
+import { listGeminiModels } from "../ai/gemini.js";
+import { DEFAULT_GEMINI_MODEL, getGeminiApiKey, getGeminiModel, setGeminiApiKey, setGeminiModel } from "../ai/gemini-key.js";
 import { type Preferences, usePreferences } from "../app/preferences.js";
 import { useSession } from "../app/session.js";
 import { useTheme } from "../app/theme.js";
@@ -14,23 +15,19 @@ import { ConfirmDialog } from "../ui/primitives.js";
 
 const CATEGORIES = ["video", "audio", "image", "document", "archive", "software", "other"];
 
-type Tab = "account" | "preferences" | "categories" | "ai" | "import" | "operator";
+type Tab = "account" | "preferences" | "categories" | "ai" | "import";
 const TABS: { id: Tab; label: string }[] = [
   { id: "account", label: "Account" },
   { id: "preferences", label: "Preferences" },
   { id: "categories", label: "Categories" },
   { id: "ai", label: "AI" },
   { id: "import", label: "Import & export" },
-  { id: "operator", label: "Operator" },
 ];
 
-/** §8 screen 9: account, preferences, categories, import/export and (for operators) admin controls. */
+/** §8 screen 9: account, preferences, categories and import/export. */
 export default function Settings() {
   const params = useParams({ strict: false }) as { _splat?: string };
   const tab = (TABS.find((t) => t.id === params._splat)?.id ?? "account") as Tab;
-  const { account } = useSession();
-
-  const visibleTabs = TABS.filter((t) => t.id !== "operator" || account?.operator);
 
   return (
     <div style={{ display: "flex", height: "100%", minHeight: 0 }}>
@@ -45,7 +42,7 @@ export default function Settings() {
           gap: 2,
         }}
       >
-        {visibleTabs.map((t) => (
+        {TABS.map((t) => (
           <Link
             key={t.id}
             to="/settings/$"
@@ -74,7 +71,6 @@ export default function Settings() {
         {tab === "categories" && <CategoriesTab />}
         {tab === "ai" && <AiTab />}
         {tab === "import" && <ImportExportTab />}
-        {tab === "operator" && account?.operator && <OperatorTab />}
       </div>
     </div>
   );
@@ -380,10 +376,21 @@ function CategoriesTab() {
 
 function AiTab() {
   const [key, setKey] = useState(() => getGeminiApiKey() ?? "");
+  const [model, setModel] = useState(() => getGeminiModel());
   const [saved, setSaved] = useState(false);
+
+  const trimmedKey = key.trim();
+  const modelsQuery = useQuery({
+    queryKey: ["gemini-models", trimmedKey],
+    queryFn: () => listGeminiModels(trimmedKey),
+    enabled: trimmedKey.length > 10,
+    staleTime: 5 * 60 * 1000,
+  });
+  const models = modelsQuery.data ?? [];
 
   const save = () => {
     setGeminiApiKey(key.trim() || null);
+    setGeminiModel(model.trim() || null);
     setSaved(true);
     window.setTimeout(() => setSaved(false), 1500);
   };
@@ -437,6 +444,57 @@ function AiTab() {
           </button>
         </div>
       </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        <span style={{ font: "600 13px/1 'Instrument Sans', system-ui, sans-serif" }}>Gemini model</span>
+        {models.length > 0 ? (
+          <select
+            value={model}
+            onChange={(e) => setModel(e.target.value)}
+            style={{
+              width: "100%",
+              height: 34,
+              padding: "0 10px",
+              border: "1px solid var(--dv-border)",
+              borderRadius: 8,
+              background: "var(--dv-bg-sub)",
+              font: "400 12px/1 'JetBrains Mono', monospace",
+            }}
+          >
+            {!models.some((m) => m.name === model) && <option value={model}>{model}</option>}
+            {models.map((m) => (
+              <option key={m.name} value={m.name}>
+                {m.displayName} ({m.name})
+              </option>
+            ))}
+          </select>
+        ) : (
+          <input
+            value={model}
+            onChange={(e) => setModel(e.target.value)}
+            placeholder={DEFAULT_GEMINI_MODEL}
+            autoComplete="off"
+            style={{
+              width: "100%",
+              height: 34,
+              padding: "0 10px",
+              border: "1px solid var(--dv-border)",
+              borderRadius: 8,
+              background: "var(--dv-bg-sub)",
+              font: "400 12px/1 'JetBrains Mono', monospace",
+            }}
+          />
+        )}
+        <span style={{ font: "400 12px/1.4 'Instrument Sans', system-ui, sans-serif", color: "var(--dv-text-3)" }}>
+          {modelsQuery.isFetching
+            ? "Loading the models your key can use…"
+            : modelsQuery.isError
+              ? `Couldn't load the model list (${modelsQuery.error instanceof Error ? modelsQuery.error.message : "unknown error"}) — enter a model id manually.`
+              : trimmedKey.length <= 10
+                ? "Add your API key above to pick from the models it can use."
+                : null}{" "}
+          Defaults to {DEFAULT_GEMINI_MODEL}.
+        </span>
+      </div>
     </div>
   );
 }
@@ -445,6 +503,7 @@ type ImportStage = "idle" | "reading" | "preview" | "importing" | "done" | "erro
 
 function ImportExportTab() {
   const queryClient = useQueryClient();
+  const { refreshStats } = useSession();
   const fileInput = useRef<HTMLInputElement>(null);
   const [stage, setStage] = useState<ImportStage>("idle");
   const [preview, setPreview] = useState<ArchivePreview | null>(null);
@@ -480,6 +539,7 @@ function ImportExportTab() {
       await vaultWorker().importArchive(bytes, resolutions);
       setStage("done");
       await queryClient.invalidateQueries();
+      await refreshStats();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Import failed");
       setStage("error");
@@ -629,120 +689,6 @@ function ImportExportTab() {
           <span style={{ flex: 1, font: "500 12px/1.4 'Instrument Sans', system-ui, sans-serif", color: "var(--dv-err)" }}>{error}</span>
         </div>
       )}
-    </div>
-  );
-}
-
-function OperatorTab() {
-  const queryClient = useQueryClient();
-  const usageQuery = useQuery({
-    queryKey: ["ops-usage"],
-    queryFn: () =>
-      apiRequest<{ users: number; vaults: number; signupMode: "invite" | "open" | "closed"; maxUsers: number }>("GET", "/ops/usage"),
-  });
-  const [inviteEmail, setInviteEmail] = useState("");
-  const [inviteStatus, setInviteStatus] = useState<string | null>(null);
-
-  const setSignupMode = async (signupMode: "invite" | "open" | "closed") => {
-    await apiRequest("PUT", "/ops/config", { signupMode });
-    await queryClient.invalidateQueries({ queryKey: ["ops-usage"] });
-  };
-
-  const sendInvite = async () => {
-    if (!inviteEmail.trim()) return;
-    const result = await apiRequest<{ invited: string }>("POST", "/ops/invites", { email: inviteEmail });
-    setInviteStatus(`Invited ${result.invited}`);
-    setInviteEmail("");
-  };
-
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 18, maxWidth: 640 }}>
-      <SectionTitle>Operator</SectionTitle>
-      <span style={{ font: "400 12px/1.5 'Instrument Sans', system-ui, sans-serif", color: "var(--dv-text-3)" }}>
-        No access to other users' data — only account and usage controls.
-      </span>
-      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-        <span style={{ font: "600 13px/1 'Instrument Sans', system-ui, sans-serif" }}>Sign-up mode</span>
-        <div
-          style={{
-            display: "flex",
-            gap: 2,
-            padding: 2,
-            border: "1px solid var(--dv-border)",
-            borderRadius: 9,
-            background: "var(--dv-bg-sub)",
-            width: "fit-content",
-          }}
-        >
-          {(["invite", "open", "closed"] as const).map((m) => (
-            <button
-              type="button"
-              key={m}
-              onClick={() => setSignupMode(m)}
-              style={{
-                minHeight: 30,
-                padding: "0 13px",
-                border: 0,
-                borderRadius: 7,
-                cursor: "pointer",
-                font: "500 12px/1 'Instrument Sans', system-ui, sans-serif",
-                background: usageQuery.data?.signupMode === m ? "var(--dv-bg)" : "transparent",
-                color: usageQuery.data?.signupMode === m ? "var(--dv-text)" : "var(--dv-text-3)",
-                textTransform: "capitalize",
-              }}
-            >
-              {m}
-            </button>
-          ))}
-        </div>
-      </div>
-      <div style={{ display: "flex", flexDirection: "column", gap: 6, maxWidth: 280 }}>
-        <span style={{ font: "400 13px/1 'Instrument Sans', system-ui, sans-serif" }}>Users</span>
-        <span className="dv-mono" style={{ fontSize: 13 }}>
-          {usageQuery.data ? `${usageQuery.data.users} of ${usageQuery.data.maxUsers} max` : "…"}
-        </span>
-      </div>
-      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-        <span style={{ font: "600 13px/1 'Instrument Sans', system-ui, sans-serif" }}>Invite a user</span>
-        <div style={{ display: "flex", gap: 8 }}>
-          <input
-            value={inviteEmail}
-            onChange={(e) => setInviteEmail(e.target.value)}
-            placeholder="someone@example.com"
-            style={{
-              flex: 1,
-              height: 34,
-              padding: "0 10px",
-              border: "1px solid var(--dv-border)",
-              borderRadius: 8,
-              background: "var(--dv-bg-sub)",
-              outline: "none",
-              font: "400 13px/1 'JetBrains Mono', monospace",
-            }}
-          />
-          <button
-            type="button"
-            onClick={sendInvite}
-            style={{
-              minHeight: 34,
-              padding: "0 13px",
-              border: 0,
-              borderRadius: 8,
-              background: "var(--dv-accent)",
-              color: "#fff",
-              font: "500 12px/1 'Instrument Sans', system-ui, sans-serif",
-              cursor: "pointer",
-            }}
-          >
-            Invite
-          </button>
-        </div>
-        {inviteStatus && (
-          <span className="dv-mono" style={{ fontSize: 11, color: "var(--dv-ok)" }}>
-            {inviteStatus}
-          </span>
-        )}
-      </div>
     </div>
   );
 }

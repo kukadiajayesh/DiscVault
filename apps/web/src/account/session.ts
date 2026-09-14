@@ -6,19 +6,32 @@ import { forgetAccount, rememberAccount } from "./local-accounts.js";
 export interface AccountResponse {
   user: { id: string; name: string | null; email: string; image: string | null };
   vault: { id: string; name: string };
-  operator: boolean;
 }
 
+/** Small JSON calls only (account, devices, usage) — sync and pack transfers use `sync/transport.ts`. */
+const API_TIMEOUT_MS = 15_000;
+
 export async function apiRequest<T>(method: string, path: string, body?: unknown): Promise<T> {
-  const response = await fetch(`${API_PREFIX}${path}`, {
-    method,
-    credentials: "same-origin",
-    headers: {
-      [PROTOCOL_HEADER]: String(PROTOCOL_VERSION),
-      ...(body !== undefined ? { "Content-Type": "application/json" } : {}),
-    },
-    ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
-  });
+  let response: Response;
+  try {
+    response = await fetch(`${API_PREFIX}${path}`, {
+      method,
+      credentials: "same-origin",
+      headers: {
+        [PROTOCOL_HEADER]: String(PROTOCOL_VERSION),
+        ...(body !== undefined ? { "Content-Type": "application/json" } : {}),
+      },
+      ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+      // A server that accepts the connection but never answers would otherwise leave the app on
+      // "Loading DiscVault…" forever; timing out surfaces the Retry screen instead.
+      signal: AbortSignal.timeout(API_TIMEOUT_MS),
+    });
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "TimeoutError") {
+      throw new Error(`${method} ${path} timed out after ${API_TIMEOUT_MS / 1000}s`);
+    }
+    throw error;
+  }
   if (!response.ok) throw new Error(`${method} ${path} failed: ${response.status}`);
   return response.json() as Promise<T>;
 }

@@ -46,10 +46,7 @@ export default function Sync() {
       await vaultWorker().sync();
       setLastSyncAt(new Date().toISOString());
       await refreshStats();
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ["outbox"] }),
-        queryClient.invalidateQueries({ queryKey: ["conflicts"] }),
-      ]);
+      await queryClient.invalidateQueries();
     } finally {
       setSyncing(false);
     }

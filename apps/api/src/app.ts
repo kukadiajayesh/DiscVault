@@ -18,7 +18,6 @@ import { type Context, Hono } from "hono";
 import { createMiddleware } from "hono/factory";
 import {
   deleteAccountRows,
-  isOperator,
   listDevices,
   listVaultIds,
   opsUsage,
@@ -112,7 +111,6 @@ export function createApp(deps: AppDeps) {
     return c.json({
       user: { id: scope.userId, name: scope.name, email: scope.email, image: scope.image },
       vault: { id: vault.id, name: vault.name, ...summary },
-      operator: await isOperator(c.env, scope.userId),
     });
   });
 
@@ -222,17 +220,10 @@ export function createApp(deps: AppDeps) {
     return c.json(await stub.summary(vaultId));
   });
 
-  // ── Operator (session whose Google sub is in OPERATOR_SUBS) ────────────
-  const requireOperator = createMiddleware<AppEnv>(async (c, next) => {
-    const scope = await deps.resolveScope(c);
-    if (!scope || !(await isOperator(c.env, scope.userId))) return apiError(c, "not_found", "not found");
-    c.set("scope", scope);
-    return next();
-  });
+  // ── Operator (secret token) ─────────────────────────────────────────────
+  app.get("/ops/usage", requireOpsToken, async (c) => c.json(await opsUsage(c.env)));
 
-  app.get("/ops/usage", requireOperator, async (c) => c.json(await opsUsage(c.env)));
-
-  app.put("/ops/config", requireOperator, async (c) => {
+  app.put("/ops/config", requireOpsToken, async (c) => {
     const body = await readJson(c, OpsConfigRequest);
     if (!body.ok) return body.response;
     if (body.data.signupMode) await setConfig(c.env, "signup_mode", body.data.signupMode);
@@ -240,7 +231,7 @@ export function createApp(deps: AppDeps) {
     return c.json(await opsUsage(c.env));
   });
 
-  app.post("/ops/invites", requireOperator, async (c) => {
+  app.post("/ops/invites", requireOpsToken, async (c) => {
     const body = await readJson(c, OpsInviteRequest);
     if (!body.ok) return body.response;
     await c.env.DIRECTORY.prepare("INSERT OR IGNORE INTO invite (email, created_at) VALUES (?, ?)")
@@ -249,12 +240,12 @@ export function createApp(deps: AppDeps) {
     return c.json({ invited: body.data.email.toLowerCase() });
   });
 
-  app.delete("/ops/invites/:email", requireOperator, async (c) => {
+  app.delete("/ops/invites/:email", requireOpsToken, async (c) => {
     await c.env.DIRECTORY.prepare("DELETE FROM invite WHERE email = ?").bind(c.req.param("email")).run();
     return c.json({ removed: true });
   });
 
-  app.put("/ops/vaults/:id/quotas", requireOperator, async (c) => {
+  app.put("/ops/vaults/:id/quotas", requireOpsToken, async (c) => {
     const body = await readJson(c, Quotas.partial());
     if (!body.ok) return body.response;
     if (!(await vaultExists(c.env, c.req.param("id")))) return apiError(c, "not_found", "not found");

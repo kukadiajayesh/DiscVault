@@ -2,8 +2,8 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { readDiscClassification } from "../ai/classification.js";
-import { classifyDiscWithGemini } from "../ai/gemini.js";
-import { getGeminiApiKey } from "../ai/gemini-key.js";
+import { classifyDiscWithGemini, listGeminiModels } from "../ai/gemini.js";
+import { getGeminiApiKey, getGeminiModel, setGeminiModel } from "../ai/gemini-key.js";
 import type { FolderChild } from "../db/catalog.js";
 import { vaultWorker } from "../db/rpc.js";
 import { formatCount, formatDate, formatSizeKb } from "../ui/format.js";
@@ -30,6 +30,15 @@ export default function DiscExplorer() {
   const [notes, setNotes] = useState<string | null>(null);
   const [analyzing, setAnalyzing] = useState(false);
   const [aiError, setAiError] = useState<string | null>(null);
+  const [aiModel, setAiModel] = useState(() => getGeminiModel());
+  const geminiApiKey = getGeminiApiKey();
+  const aiModelsQuery = useQuery({
+    queryKey: ["gemini-models", geminiApiKey],
+    queryFn: () => listGeminiModels(geminiApiKey as string),
+    enabled: !!geminiApiKey,
+    staleTime: 5 * 60 * 1000,
+  });
+  const aiModels = aiModelsQuery.data ?? [];
 
   const discQuery = useQuery({ queryKey: ["disc", discNo], queryFn: () => vaultWorker().getDisc(discNo) });
   const entriesQuery = useQuery({
@@ -85,8 +94,10 @@ export default function DiscExplorer() {
     try {
       const summary = await vaultWorker().discAiSummary(discNo);
       if (!summary) throw new Error("disc not found");
-      const classification = await classifyDiscWithGemini(apiKey, summary);
+      const model = aiModel.trim() || getGeminiModel();
+      const classification = await classifyDiscWithGemini(apiKey, summary, model);
       await vaultWorker().saveDiscClassification(discNo, classification);
+      setGeminiModel(model);
       await queryClient.invalidateQueries({ queryKey: ["disc", discNo] });
     } catch (err) {
       setAiError(err instanceof Error ? err.message : String(err));
@@ -473,23 +484,65 @@ export default function DiscExplorer() {
             >
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
                 <span style={{ font: "600 13px/1 'Instrument Sans', system-ui, sans-serif" }}>AI classification</span>
-                <button
-                  type="button"
-                  onClick={analyzeWithAi}
-                  disabled={analyzing}
-                  style={{
-                    minHeight: 26,
-                    padding: "0 10px",
-                    border: "1px solid var(--dv-border-2)",
-                    borderRadius: 7,
-                    background: "var(--dv-bg-sub)",
-                    font: "500 11px/1 'Instrument Sans', system-ui, sans-serif",
-                    cursor: analyzing ? "default" : "pointer",
-                    opacity: analyzing ? 0.6 : 1,
-                  }}
-                >
-                  {analyzing ? "Analyzing…" : aiClassification ? "Re-analyze" : "Analyze with AI"}
-                </button>
+                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  {aiModels.length > 0 ? (
+                    <select
+                      value={aiModel}
+                      onChange={(e) => setAiModel(e.target.value)}
+                      disabled={analyzing}
+                      title="Gemini model to use for this analysis"
+                      style={{
+                        width: 148,
+                        minHeight: 26,
+                        padding: "0 6px",
+                        border: "1px solid var(--dv-border-2)",
+                        borderRadius: 7,
+                        background: "var(--dv-bg-sub)",
+                        font: "400 11px/1 'JetBrains Mono', monospace",
+                      }}
+                    >
+                      {!aiModels.some((m) => m.name === aiModel) && <option value={aiModel}>{aiModel}</option>}
+                      {aiModels.map((m) => (
+                        <option key={m.name} value={m.name}>
+                          {m.name}
+                        </option>
+                      ))}
+                    </select>
+                  ) : (
+                    <input
+                      value={aiModel}
+                      onChange={(e) => setAiModel(e.target.value)}
+                      disabled={analyzing}
+                      title="Gemini model to use for this analysis"
+                      style={{
+                        width: 128,
+                        minHeight: 26,
+                        padding: "0 8px",
+                        border: "1px solid var(--dv-border-2)",
+                        borderRadius: 7,
+                        background: "var(--dv-bg-sub)",
+                        font: "400 11px/1 'JetBrains Mono', monospace",
+                      }}
+                    />
+                  )}
+                  <button
+                    type="button"
+                    onClick={analyzeWithAi}
+                    disabled={analyzing}
+                    style={{
+                      minHeight: 26,
+                      padding: "0 10px",
+                      border: "1px solid var(--dv-border-2)",
+                      borderRadius: 7,
+                      background: "var(--dv-bg-sub)",
+                      font: "500 11px/1 'Instrument Sans', system-ui, sans-serif",
+                      cursor: analyzing ? "default" : "pointer",
+                      opacity: analyzing ? 0.6 : 1,
+                    }}
+                  >
+                    {analyzing ? "Analyzing…" : aiClassification ? "Re-analyze" : "Analyze with AI"}
+                  </button>
+                </div>
               </div>
               {aiClassification ? (
                 <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>

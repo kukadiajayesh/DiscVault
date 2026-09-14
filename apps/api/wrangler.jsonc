@@ -66,5 +66,5 @@
 		"DEFAULT_SIGNUP_MODE": "invite"
 	}
 	// Secrets (wrangler secret put / .dev.vars): BETTER_AUTH_SECRET, GOOGLE_CLIENT_ID,
-	// GOOGLE_CLIENT_SECRET, OPS_TOKEN, OPERATOR_SUBS (comma-separated Google `sub`s).
+	// GOOGLE_CLIENT_SECRET, OPS_TOKEN.
 }

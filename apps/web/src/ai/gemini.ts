@@ -1,9 +1,10 @@
 import type { DiscAiSummary } from "../db/catalog.js";
 import type { StoredClassification } from "./classification.js";
+import { DEFAULT_GEMINI_MODEL } from "./gemini-key.js";
 
-/** Fast, cheap model — plenty for a short classification and friendly to Gemini's free tier. */
-const MODEL = "gemini-2.5-flash";
-const ENDPOINT = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent`;
+function endpointFor(model: string): string {
+  return `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
+}
 
 const RESPONSE_SCHEMA = {
   type: "OBJECT",
@@ -35,9 +36,37 @@ interface GeminiResponse {
   candidates?: { content?: { parts?: { text?: string }[] } }[];
 }
 
+export interface GeminiModelInfo {
+  /** Bare model id, e.g. "gemini-3.6-flash" (the "models/" prefix Google returns is stripped). */
+  name: string;
+  displayName: string;
+}
+
+interface ListModelsResponse {
+  models?: { name: string; displayName?: string; supportedGenerationMethods?: string[] }[];
+}
+
+/** Lists the Gemini models this API key can use for classification (i.e. support `generateContent`). */
+export async function listGeminiModels(apiKey: string): Promise<GeminiModelInfo[]> {
+  const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?pageSize=200&key=${encodeURIComponent(apiKey)}`);
+  if (!response.ok) {
+    const body = await response.text().catch(() => "");
+    throw new Error(`Gemini request failed (${response.status}): ${body.slice(0, 200) || response.statusText}`);
+  }
+  const data = (await response.json()) as ListModelsResponse;
+  return (data.models ?? [])
+    .filter((m) => m.supportedGenerationMethods?.includes("generateContent"))
+    .map((m) => ({ name: m.name.replace(/^models\//, ""), displayName: m.displayName ?? m.name }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
+
 /** Calls Gemini directly from the browser with the user's own key — see `ai/gemini-key.ts`. */
-export async function classifyDiscWithGemini(apiKey: string, input: DiscAiSummary): Promise<StoredClassification> {
-  const response = await fetch(`${ENDPOINT}?key=${encodeURIComponent(apiKey)}`, {
+export async function classifyDiscWithGemini(
+  apiKey: string,
+  input: DiscAiSummary,
+  model: string = DEFAULT_GEMINI_MODEL,
+): Promise<StoredClassification> {
+  const response = await fetch(`${endpointFor(model)}?key=${encodeURIComponent(apiKey)}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -58,7 +87,7 @@ export async function classifyDiscWithGemini(apiKey: string, input: DiscAiSummar
     label: parsed.label,
     summary: parsed.summary,
     confidence: parsed.confidence,
-    model: MODEL,
+    model,
     analyzedAt: new Date().toISOString(),
   };
 }
