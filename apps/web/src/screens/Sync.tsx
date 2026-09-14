@@ -21,10 +21,9 @@ function bytesToMb(bytes: number): string {
 
 /** §8 screen 8: sync status, pending changes, conflicts, storage, devices, usage, backups. */
 export default function Sync() {
-  const { online, stats, account, refreshStats, signOut } = useSession();
+  const { online, stats, account, refreshStats, signOut, syncing, syncStatus, syncNow: runSync } = useSession();
   const queryClient = useQueryClient();
-  const [syncing, setSyncing] = useState(false);
-  const [lastSyncAt, setLastSyncAt] = useState<string | null>(null);
+  const lastSyncAt = syncStatus?.state === "synced" ? syncStatus.lastSyncAt : null;
   const [confirmWipe, setConfirmWipe] = useState(false);
   const [exporting, setExporting] = useState(false);
 
@@ -41,15 +40,7 @@ export default function Sync() {
   });
 
   const syncNow = async () => {
-    setSyncing(true);
-    try {
-      await vaultWorker().sync();
-      setLastSyncAt(new Date().toISOString());
-      await refreshStats();
-      await queryClient.invalidateQueries();
-    } finally {
-      setSyncing(false);
-    }
+    await runSync(true);
   };
 
   const discard = async (id: string) => {
@@ -123,6 +114,17 @@ export default function Sync() {
           {lastSyncAt && (
             <span className="dv-mono" style={{ fontSize: 12, color: "var(--dv-text-3)" }}>
               Last sync {formatDate(lastSyncAt)}
+            </span>
+          )}
+          {syncStatus && syncStatus.state !== "synced" && syncStatus.state !== "offline" && (
+            <span style={{ font: "500 12px/1.3 'Instrument Sans', system-ui, sans-serif", color: "var(--dv-err)" }}>
+              {syncStatus.state === "error"
+                ? `Sync failed: ${syncStatus.message}`
+                : syncStatus.state === "paused"
+                  ? `Paused until ${formatDate(syncStatus.until)} (${syncStatus.reason})`
+                  : syncStatus.state === "signed_out"
+                    ? "Signed out — sign in again to sync"
+                    : "App update required to sync"}
             </span>
           )}
           <span className="dv-mono" style={{ fontSize: 12, color: "var(--dv-text-3)" }}>

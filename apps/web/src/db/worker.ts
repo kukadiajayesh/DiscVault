@@ -172,12 +172,31 @@ function isLeader(): boolean {
 }
 
 /** Wraps a local DB operation so a follower tab forwards it to the leader instead of running it. */
-function remote<A extends unknown[], R>(name: string, fn: (...args: A) => R | Promise<R>): (...args: A) => Promise<R> {
+function remote<A extends unknown[], R>(name: string, fn: (...args: A) => R | Promise<R>, timeoutMs?: number): (...args: A) => Promise<R> {
   return async (...args: A) => {
     if (isLeader()) return fn(...args);
     if (!channel) throw new Error("no vault is open");
-    return channel.call<R>(name, args);
+    return channel.call<R>(name, args, timeoutMs);
   };
+}
+
+/** A first sync on a new device downloads every pack, so a follower must wait far longer than 10 s. */
+const SYNC_TIMEOUT_MS = 15 * 60_000;
+
+/**
+ * The leader's one in-flight sync, shared by every caller — this tab's timers and each follower
+ * tab's focus/interval triggers — so two syncs never pull or push over each other.
+ */
+let syncInFlight: Promise<SyncReport> | null = null;
+
+function runSync(mode: "full" | "if-needed"): Promise<SyncReport> {
+  if (!syncInFlight) {
+    const engine = new SyncEngine(requireDb(), httpTransport());
+    syncInFlight = (mode === "full" ? engine.sync() : engine.syncIfNeeded()).finally(() => {
+      syncInFlight = null;
+    });
+  }
+  return syncInFlight;
 }
 
 function teardown(): void {
@@ -399,7 +418,10 @@ const api = {
 
   exportArchive: remote("exportArchive", (): Promise<ExportResult> => exportArchive(requireDb())),
 
-  sync: remote("sync", (): Promise<SyncReport> => new SyncEngine(requireDb(), httpTransport()).sync()),
+  sync: remote("sync", (): Promise<SyncReport> => runSync("full"), SYNC_TIMEOUT_MS),
+
+  /** Automatic sync (app open, focus, reconnect, interval): a 1-row head check unless there's work. */
+  syncIfNeeded: remote("syncIfNeeded", (): Promise<SyncReport> => runSync("if-needed"), SYNC_TIMEOUT_MS),
 
   listOutbox: remote("listOutbox", () => listOutbox(requireDb())),
 

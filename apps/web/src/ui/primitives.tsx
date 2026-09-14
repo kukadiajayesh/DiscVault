@@ -136,7 +136,7 @@ export function StatTile({ label, value, color }: { label: string; value: ReactN
   );
 }
 
-export type SyncState = "synced" | "syncing" | "offline" | "pending" | "conflict";
+export type SyncState = "synced" | "syncing" | "offline" | "pending" | "conflict" | "error";
 
 export function SyncIndicator({ state, pending = 0 }: { state: SyncState; pending?: number }) {
   const map: Record<SyncState, { glyph: string; label: string; color: string }> = {
@@ -145,6 +145,7 @@ export function SyncIndicator({ state, pending = 0 }: { state: SyncState; pendin
     offline: { glyph: "○", label: "Offline", color: "var(--dv-text-3)" },
     pending: { glyph: "▲", label: `${pending} pending`, color: "var(--dv-warn)" },
     conflict: { glyph: "⚠", label: "Conflict", color: "var(--dv-err)" },
+    error: { glyph: "⚠", label: "Sync failed", color: "var(--dv-err)" },
   };
   const m = map[state];
   return (

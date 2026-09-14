@@ -100,6 +100,36 @@ export class SyncEngine {
     return head.seq > Number(getState(this.db, "last_seq") ?? 0);
   }
 
+  /**
+   * The automatic-sync entry point (app open, focus, reconnect, interval): runs a full `sync()` only
+   * when there is local work to send, a pack still to load, or the server's `seq` has moved —
+   * otherwise it costs just the 1-row head check.
+   */
+  async syncIfNeeded(onProgress?: SyncProgress): Promise<SyncReport> {
+    const hasLocalWork =
+      this.pendingCount() > 0 ||
+      Boolean(this.db.get("SELECT 1 FROM pending_pack_part WHERE uploaded = 0 LIMIT 1")) ||
+      this.discsNeedingPacks().length > 0;
+    if (!hasLocalWork) {
+      try {
+        if (!(await this.hasRemoteChanges())) {
+          return {
+            status: { state: "synced", lastSyncAt: getState(this.db, "last_sync_at") },
+            pulled: 0,
+            pushed: 0,
+            packsDownloaded: 0,
+            packsUploaded: 0,
+            conflicts: 0,
+            pending: 0,
+          };
+        }
+      } catch {
+        // Fall through: a full sync reports the same failure (offline, signed out…) as a status.
+      }
+    }
+    return this.sync(onProgress);
+  }
+
   pendingCount(): number {
     return Number(this.db.get<{ n: number }>("SELECT count(*) AS n FROM outbox WHERE blocked = 0")?.n ?? 0);
   }

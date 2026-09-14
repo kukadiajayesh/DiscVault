@@ -9,12 +9,11 @@ type ImportStage = "idle" | "reading" | "importing" | "done" | "error";
 
 /** §8 screen 2: new account picks a starting point; an existing account on a new device downloads its catalog. */
 export default function Setup() {
-  const { stats, refreshStats } = useSession();
+  const { stats, refreshStats, syncing, syncNow } = useSession();
   const navigate = useNavigate();
   const fileInput = useRef<HTMLInputElement>(null);
   const [importStage, setImportStage] = useState<ImportStage>("idle");
   const [importError, setImportError] = useState<string | null>(null);
-  const [syncing, setSyncing] = useState(false);
 
   const isNewAccount = (stats?.discs ?? 0) === 0;
 
@@ -42,13 +41,7 @@ export default function Setup() {
   };
 
   const onSync = async () => {
-    setSyncing(true);
-    try {
-      await vaultWorker().sync();
-      await refreshStats();
-    } finally {
-      setSyncing(false);
-    }
+    await syncNow(true);
     navigate({ to: "/" });
   };
 

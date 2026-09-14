@@ -3,7 +3,7 @@ import { type FormEvent, type ReactNode, useEffect, useRef, useState } from "rea
 import { signOut as authSignOut } from "../account/auth-client.js";
 import { formatSizeKb, initials } from "../ui/format.js";
 import { Icon, type IconName, SearchGlyph } from "../ui/icons.js";
-import { SyncIndicator } from "../ui/primitives.js";
+import { SyncIndicator, type SyncState } from "../ui/primitives.js";
 import { useSession } from "./session.js";
 
 function useSignOut() {
@@ -347,10 +347,23 @@ function AccountMenu() {
 }
 
 function SyncStatusPill() {
-  const { online, stats } = useSession();
-  const state = !online ? "offline" : stats && stats.pendingChanges > 0 ? "pending" : "synced";
+  const { online, stats, syncStatus, syncing } = useSession();
+  const failed = syncStatus && syncStatus.state !== "synced" && syncStatus.state !== "offline" && syncStatus.state !== "paused";
+  const state: SyncState = !online
+    ? "offline"
+    : syncing || !syncStatus
+      ? "syncing"
+      : failed
+        ? "error"
+        : stats && stats.pendingChanges > 0
+          ? "pending"
+          : "synced";
   return (
-    <Link to="/sync" style={{ textDecoration: "none" }}>
+    <Link
+      to="/sync"
+      style={{ textDecoration: "none" }}
+      title={syncStatus?.state === "error" ? syncStatus.message : syncStatus?.state === "paused" ? syncStatus.reason : undefined}
+    >
       <SyncIndicator state={state} pending={stats?.pendingChanges ?? 0} />
     </Link>
   );
