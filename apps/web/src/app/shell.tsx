@@ -1,9 +1,18 @@
 import { Link, type LinkProps, useNavigate, useRouterState } from "@tanstack/react-router";
-import { type FormEvent, type ReactNode, useEffect, useState } from "react";
+import { type FormEvent, type ReactNode, useEffect, useRef, useState } from "react";
+import { signOut as authSignOut } from "../account/auth-client.js";
 import { formatSizeKb, initials } from "../ui/format.js";
 import { Icon, type IconName, SearchGlyph } from "../ui/icons.js";
 import { SyncIndicator } from "../ui/primitives.js";
 import { useSession } from "./session.js";
+
+function useSignOut() {
+  const navigate = useNavigate();
+  return async () => {
+    await authSignOut();
+    navigate({ to: "/login" });
+  };
+}
 
 const SETTINGS_LINK = { to: "/settings/$" as const, params: { _splat: "account" } };
 
@@ -227,29 +236,112 @@ function DesktopShell({ children }: { children: ReactNode }) {
           >
             ＋ Add disc
           </Link>
-          <Link
-            to={SETTINGS_LINK.to}
-            params={SETTINGS_LINK.params}
-            title={account ? `${account.user.name ?? account.user.email} · ${account.user.email}` : "Account"}
-            style={{
-              width: 30,
-              height: 30,
-              flex: "none",
-              borderRadius: "50%",
-              background: "var(--dv-accent)",
-              color: "#fff",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              textDecoration: "none",
-              font: "600 11px/1 'Instrument Sans', system-ui, sans-serif",
-            }}
-          >
-            {account ? initials(account.user.name, account.user.email) : "…"}
-          </Link>
+          <AccountMenu />
         </div>
         <div style={{ flex: 1, minHeight: 0, overflow: "auto" }}>{children}</div>
       </div>
+    </div>
+  );
+}
+
+function AccountMenu() {
+  const { account } = useSession();
+  const signOut = useSignOut();
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onClick = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", onClick);
+    return () => document.removeEventListener("mousedown", onClick);
+  }, [open]);
+
+  return (
+    <div ref={ref} style={{ position: "relative" }}>
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        title={account ? `${account.user.name ?? account.user.email} · ${account.user.email}` : "Account"}
+        style={{
+          width: 30,
+          height: 30,
+          flex: "none",
+          borderRadius: "50%",
+          border: 0,
+          background: "var(--dv-accent)",
+          color: "#fff",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          cursor: "pointer",
+          font: "600 11px/1 'Instrument Sans', system-ui, sans-serif",
+        }}
+      >
+        {account ? initials(account.user.name, account.user.email) : "…"}
+      </button>
+      {open && (
+        <div
+          style={{
+            position: "absolute",
+            top: "calc(100% + 6px)",
+            right: 0,
+            zIndex: 10,
+            minWidth: 170,
+            padding: 5,
+            border: "1px solid var(--dv-border)",
+            borderRadius: 10,
+            background: "var(--dv-panel)",
+            boxShadow: "0 8px 24px rgba(0,0,0,.12)",
+            display: "flex",
+            flexDirection: "column",
+            gap: 1,
+          }}
+        >
+          <Link
+            to={SETTINGS_LINK.to}
+            params={SETTINGS_LINK.params}
+            onClick={() => setOpen(false)}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              minHeight: 32,
+              padding: "0 9px",
+              borderRadius: 7,
+              textDecoration: "none",
+              color: "var(--dv-text-2)",
+              font: "500 13px/1 'Instrument Sans', system-ui, sans-serif",
+            }}
+          >
+            <Icon name="Settings" size={15} color="var(--dv-text-3)" />
+            Account settings
+          </Link>
+          <button
+            type="button"
+            onClick={signOut}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              minHeight: 32,
+              padding: "0 9px",
+              border: 0,
+              borderRadius: 7,
+              background: "transparent",
+              textAlign: "left",
+              color: "var(--dv-text-2)",
+              cursor: "pointer",
+              font: "500 13px/1 'Instrument Sans', system-ui, sans-serif",
+            }}
+          >
+            <Icon name="Logout" size={15} color="var(--dv-text-3)" />
+            Sign out
+          </button>
+        </div>
+      )}
     </div>
   );
 }
@@ -281,8 +373,9 @@ function MobileShell({ children }: { children: ReactNode }) {
         }}
       >
         <span style={{ font: "700 17px/1 'Instrument Sans', system-ui, sans-serif", letterSpacing: "-.01em" }}>DiscVault</span>
-        <div style={{ marginLeft: "auto" }}>
+        <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 10 }}>
           <SyncStatusPill />
+          <MobileSignOutButton />
         </div>
       </div>
       <div style={{ flex: 1, minHeight: 0, padding: "14px 14px 96px", overflow: "auto" }}>{children}</div>
@@ -303,6 +396,33 @@ function MobileShell({ children }: { children: ReactNode }) {
         ))}
       </div>
     </div>
+  );
+}
+
+function MobileSignOutButton() {
+  const signOut = useSignOut();
+  return (
+    <button
+      type="button"
+      onClick={signOut}
+      title="Sign out"
+      aria-label="Sign out"
+      style={{
+        width: 30,
+        height: 30,
+        flex: "none",
+        border: 0,
+        borderRadius: "50%",
+        background: "transparent",
+        color: "var(--dv-text-3)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        cursor: "pointer",
+      }}
+    >
+      <Icon name="Logout" size={18} />
+    </button>
   );
 }
 

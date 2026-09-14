@@ -81,15 +81,23 @@ component, matching the design. Left for a later pass:
       `requireOpsToken`-guarded route (e.g. `GET /api/ops/vaults/:id/packs/:disc/:hash/:part`)
       before the workflow can actually back up pack contents, not just metadata.
 
-### 2.4 Cloudflare setup (needs your account; not done)
-- [ ] Create the D1 database `discvault-directory` and KV namespace, then replace the placeholder
-      IDs in `apps/api/wrangler.jsonc`.
-- [ ] Google Cloud OAuth client. Redirect URIs: `http://localhost:5173/api/auth/callback/google`
-      and the production origin.
-- [ ] Secrets: `BETTER_AUTH_SECRET`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `OPS_TOKEN`,
-      `OPERATOR_SUBS` (your Google `sub`).
-- [ ] Set `PUBLIC_ORIGIN` for production (`apps/api/wrangler.jsonc` `vars` currently defaults it to
-      `http://localhost:8787` for local dev).
+### 2.4 Cloudflare setup (needs your account)
+- [x] Create the D1 database `discvault-directory` and KV namespace, real IDs in
+      `apps/api/wrangler.jsonc` (committed — these IDs aren't credentials).
+- [x] Google Cloud OAuth client, local redirect URI registered.
+- [x] Local secrets in `apps/api/.dev.vars`: `BETTER_AUTH_SECRET`, `GOOGLE_CLIENT_ID`,
+      `GOOGLE_CLIENT_SECRET`, `OPS_TOKEN`, `OPERATOR_SUBS` (owner's Google `sub`, confirmed via
+      `GET /api/account` → `"operator": true`).
+- [x] Local `PUBLIC_ORIGIN` fixed to `http://localhost:5173` (was `:8787`, which doesn't match
+      what the browser/Google OAuth redirect actually use — Vite proxies `/api/*` to 8787, but the
+      browser only ever talks to 5173; the old default caused `redirect_uri_mismatch`).
+- [x] First local sign-in bootstrap: the `invite` table is what actually gates sign-up in `invite`
+      mode (`decideSignup`, not `OPERATOR_SUBS` directly — that only grants the operator UI to an
+      account that already exists), so the owner's email needs an `invite` row before their first
+      sign-in. Not previously documented; now in `README.md` step 4.
+- [ ] Production: Worker secrets in the Cloudflare dashboard, production `PUBLIC_ORIGIN`, the
+      production Google redirect URI, and the first `wrangler deploy` — needs your Cloudflare
+      account. Full walkthrough in `DEPLOYMENT.md`.
 - [ ] Phase 0 spike checks: no payment method is asked for, and Durable Object PITR works on the
       Free plan.
 

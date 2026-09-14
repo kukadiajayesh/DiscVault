@@ -14,7 +14,9 @@
     "test": "pnpm -r test",
     "lint": "biome check .",
     "format": "biome format --write .",
-    "import-legacy": "pnpm --filter @discvault/import-legacy start"
+    "import-legacy": "pnpm --filter @discvault/import-legacy start",
+    "db:migrate:remote": "pnpm --filter @discvault/api run db:migrate:remote",
+    "deploy:api": "pnpm --filter @discvault/api run deploy"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.13",

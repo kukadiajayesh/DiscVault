@@ -14,6 +14,7 @@ export const ICON_PATH = {
   Health: "M3.5 12h4l2-4.6 3.2 9.2 2-4.6h5.8",
   Home: "M4 10.6 12 4l8 6.6V19.6h-5.6v-6h-4.8v6H4z",
   More: "M5.6 12a.9.9 0 1 0 1.8 0 .9.9 0 1 0-1.8 0M11.1 12a.9.9 0 1 0 1.8 0 .9.9 0 1 0-1.8 0M16.6 12a.9.9 0 1 0 1.8 0 .9.9 0 1 0-1.8 0",
+  Logout: "M9 4.5H5.5a1 1 0 0 0-1 1v13a1 1 0 0 0 1 1H9M15.5 16.5 20 12l-4.5-4.5M20 12H9",
 } as const;
 
 export type IconName = keyof typeof ICON_PATH;

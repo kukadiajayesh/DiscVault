@@ -62,7 +62,7 @@
 		]
 	},
 	"vars": {
-		"PUBLIC_ORIGIN": "http://localhost:8787",
+		"PUBLIC_ORIGIN": "https://discvault.kukadia-jayesh.workers.dev",
 		"DEFAULT_SIGNUP_MODE": "invite"
 	}
 	// Secrets (wrangler secret put / .dev.vars): BETTER_AUTH_SECRET, GOOGLE_CLIENT_ID,

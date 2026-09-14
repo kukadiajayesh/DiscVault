@@ -5,7 +5,9 @@ import { parseArgs } from "node:util";
 import { nodeSqlDb } from "@discvault/schema/node";
 import { buildLegacyArchive } from "./build-archive.js";
 
-const LEGACY_COUNTS = { discs: 311, folders: 42_840, files: 345_215 };
+// folders: 42,840 raw dir_master rows minus 1 exact duplicate sibling entry deduped on import
+// (dvd_manager.mdb disc 23 has two identical "fonat" rows under the same parent).
+const LEGACY_COUNTS = { discs: 311, folders: 42_839, files: 345_215 };
 
 const { values } = parseArgs({
   options: {

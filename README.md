@@ -20,6 +20,11 @@ URI for local dev:
 http://localhost:5173/api/auth/callback/google
 ```
 
+This must be port 5173 (Vite, what the browser talks to), not 8787 (`wrangler dev`, what Vite
+proxies `/api/*` to) — `apps/api/wrangler.jsonc`'s `PUBLIC_ORIGIN` var is already set to
+`http://localhost:5173` to match; Better Auth computes the OAuth redirect from that var, so the
+two must agree or Google rejects the callback with `redirect_uri_mismatch`.
+
 ### 2. API secrets
 
 ```sh
@@ -58,6 +63,17 @@ live in `.dev.vars` (step 2, gitignored) locally and as encrypted Worker secrets
 pnpm --filter @discvault/api db:migrate:local
 ```
 
+The directory starts in `invite` signup mode with an empty `invite` table, and sign-up is gated
+on that table directly (`OPERATOR_SUBS` only grants the operator UI *after* an account exists) —
+so the very first sign-in fails unless your email is invited first:
+
+```sh
+cd apps/api
+npx wrangler d1 execute DIRECTORY --local --command \
+  "INSERT INTO invite (email, created_at) VALUES ('you@gmail.com', datetime('now'))"
+cd ../..
+```
+
 ### 5. Run it
 
 ```sh
@@ -65,9 +81,17 @@ pnpm dev:api   # wrangler dev on :8787
 pnpm dev:web   # vite on :5173, proxies /api to :8787
 ```
 
-Open http://localhost:5173 and sign in with the Google account whose `sub` you put in
-`OPERATOR_SUBS` (the directory starts in `invite` signup mode with no invites, so only operators
-can sign up until you open it up — see `PUT /api/ops/config`).
+Open http://localhost:5173 and sign in with the Google account you invited above. Its `sub`
+(Better Auth's `account.accountId`) isn't known until after this first sign-in — read it back and
+put it in `OPERATOR_SUBS` (`.dev.vars`) to grant yourself the operator UI, then restart
+`pnpm dev:api`:
+
+```sh
+cd apps/api
+npx wrangler d1 execute DIRECTORY --local --command \
+  "SELECT \"accountId\" AS sub FROM account WHERE \"providerId\" = 'google'"
+cd ../..
+```
 
 ### Everything else
 
@@ -81,7 +105,17 @@ pnpm import-legacy   # dvd_manager.mdb → discvault-legacy.dvault, uploads noth
 ## Deploying
 
 See `PENDING.md` §2.4 for the one-time Cloudflare setup (D1 database, KV namespace, secrets,
-OAuth redirect for the production origin) before `wrangler deploy`.
+OAuth redirect for the production origin) before deploying.
+
+```sh
+pnpm build
+pnpm db:migrate:remote
+pnpm deploy:api
+```
+
+Note: `deploy` is a reserved pnpm CLI subcommand, so `pnpm --filter @discvault/api deploy` runs
+pnpm's own deploy flow instead of the package script. Use `pnpm deploy:api` (or
+`pnpm --filter @discvault/api run deploy`) instead.
 
 For a click-by-click walkthrough of that setup — exact Cloudflare Dashboard and Google Cloud
 Console navigation, in order — see `DEPLOYMENT.md`.
