@@ -19,12 +19,14 @@ export function RequireAuth({ children }: { children: ReactNode }) {
     );
   }
 
-  if (status === "error") {
+  if (status === "error" || status === "open-elsewhere") {
     return (
       <div
         style={{ minHeight: "100vh", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 12 }}
       >
-        <span style={{ font: "600 15px/1.2 'Instrument Sans', system-ui, sans-serif" }}>Couldn't reach DiscVault</span>
+        <span style={{ font: "600 15px/1.2 'Instrument Sans', system-ui, sans-serif" }}>
+          {status === "open-elsewhere" ? "DiscVault is already open in another tab" : "Couldn't reach DiscVault"}
+        </span>
         <button
           type="button"
           onClick={retry}
