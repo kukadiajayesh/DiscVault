@@ -11,8 +11,8 @@ export interface Env {
   GOOGLE_CLIENT_ID: string;
   GOOGLE_CLIENT_SECRET: string;
   OPS_TOKEN: string;
-  /** Comma-separated Google `sub`s allowed to use /api/ops. */
-  OPERATOR_SUBS: string;
+  /** Comma-separated Google `sub`s allowed to use /api/ops. Unset (e.g. missing from .dev.vars) means no operators. */
+  OPERATOR_SUBS?: string;
 }
 
 /** The signed-in user and the only vault their requests can reach. Always from the session. */

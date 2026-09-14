@@ -52,6 +52,11 @@ function pool(): Promise<SAHPoolUtil> {
         // Headroom for one vault's main file + journal/WAL/shm + temp files.
         await poolUtil.reserveMinimumCapacity(8);
         return poolUtil;
+      })
+      .catch((error: unknown) => {
+        // Don't cache a failure (e.g. OPFS handles still held by a closing tab) — let Retry try again.
+        poolPromise = null;
+        throw error;
       });
   }
   return poolPromise;
@@ -150,6 +155,12 @@ let channel: LeaderChannel | null = null;
 /** Cached once the leader has actually finished opening SQLite; served to followers' "open" calls. */
 let openResult: OpenResult | null = null;
 let cancelPromotion: (() => void) | null = null;
+/**
+ * The in-flight first `open()`, shared by concurrent callers (e.g. React StrictMode running the
+ * bootstrap effect twice). Without it the second call loses the lock race to the first and demotes
+ * this same tab to a follower of itself — its `BroadcastChannel` never hears its own requests.
+ */
+let opening: Promise<OpenResult> | null = null;
 
 function requireDb(): SqlDb {
   if (!current) throw new Error("no vault is open");
@@ -204,13 +215,21 @@ async function becomeLeader(vaultId: string, release: ReleaseFn): Promise<OpenRe
     return handler(...args);
   });
 
-  const poolUtil = await pool();
-  const raw = new poolUtil.OpfsSAHPoolDb(vaultFilename(vaultId));
-  const db = wasmSqlDb(raw);
-  prepareLocalDb(db);
-  setState(db, "vault_id", vaultId);
-  current = { vaultId, db, release };
-  openResult = { stats: catalogStats(db), storage: await ensurePersistence() };
+  try {
+    const poolUtil = await pool();
+    const raw = new poolUtil.OpfsSAHPoolDb(vaultFilename(vaultId));
+    const db = wasmSqlDb(raw);
+    prepareLocalDb(db);
+    setState(db, "vault_id", vaultId);
+    current = { vaultId, db, release };
+    openResult = { stats: catalogStats(db), storage: await ensurePersistence() };
+  } catch (error) {
+    // `current` was never set, so teardown() can't release the lock — do it here, or this tab keeps
+    // the vault locked while unable to serve it, and every follower/Retry hangs on it.
+    if (!current) release();
+    resolveReady(); // lets queued follower calls fail fast ("vault failed to open") instead of timing out
+    throw error;
+  }
   resolveReady();
   return openResult;
 }
@@ -241,15 +260,29 @@ const api = {
       if (!channel) throw new Error("no vault is open");
       return channel.call<OpenResult>("open", [vaultId], 20_000);
     }
+    if (opening) return opening;
 
-    channel = new LeaderChannel(vaultId);
-    openVaultId = vaultId;
-    const release = await requestLock(`discvault:vault:${vaultId}`, { ifAvailable: true });
-    if (release) return becomeLeader(vaultId, release);
+    const attempt = (async () => {
+      const ownChannel = new LeaderChannel(vaultId);
+      channel = ownChannel;
+      openVaultId = vaultId;
+      const release = await requestLock(`discvault:vault:${vaultId}`, { ifAvailable: true });
+      if (release) return becomeLeader(vaultId, release);
 
-    role = "follower";
-    watchForPromotion(vaultId, `discvault:vault:${vaultId}`);
-    return channel.call<OpenResult>("open", [vaultId], 20_000);
+      role = "follower";
+      watchForPromotion(vaultId, `discvault:vault:${vaultId}`);
+      return ownChannel.call<OpenResult>("open", [vaultId], 20_000);
+    })();
+    opening = attempt;
+    try {
+      return await attempt;
+    } catch (error) {
+      // Release the lock / channel so a Retry starts clean instead of racing this tab's own leftovers.
+      teardown();
+      throw error;
+    } finally {
+      if (opening === attempt) opening = null;
+    }
   },
 
   /** Releases the tab's exclusive lock (or stops following) without deleting anything. */

@@ -65,7 +65,8 @@ export async function vaultExists(env: Env, vaultId: string): Promise<boolean> {
 }
 
 export async function isOperator(env: Env, userId: string): Promise<boolean> {
-  const subs = env.OPERATOR_SUBS.split(",")
+  const subs = (env.OPERATOR_SUBS ?? "")
+    .split(",")
     .map((s) => s.trim())
     .filter(Boolean);
   if (subs.length === 0) return false;
