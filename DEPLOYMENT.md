@@ -132,15 +132,17 @@ cd ../..
 **Navigate:** Workers & Pages → **Create** → **Import a repository** (or, on an existing Worker,
 **Settings** → **Build** → **Connect**) → pick this GitHub repo → branch `main`
 
-This repo is a pnpm workspace with more than one app (`apps/api`, `apps/web`), so the build
-config must be scoped to `apps/api` or it fails with
-`Cloudflare application detection logic has been run in the root of a workspace`:
+This repo is a pnpm workspace with more than one app (`apps/api`, `apps/web`), and `wrangler
+deploy` needs to run from `apps/api` (where `wrangler.jsonc` lives) or it fails with
+`Cloudflare application detection logic has been run in the root of a workspace`. Root directory
+stays at the repo root — the build command already builds every workspace app from there — only
+the deploy command needs to `cd` in:
 
 | Field | Value |
 |---|---|
-| Root directory | `apps/api` |
-| Build command | `cd ../.. && pnpm install && pnpm --filter @discvault/web build` (the Worker serves `apps/web/dist` as static assets, so the web app must be built first) |
-| Deploy command | `npx wrangler deploy` |
+| Root directory | *(leave as repo root)* |
+| Build command | `pnpm run build` (root script, runs `pnpm -r build` — builds `apps/web/dist`, which the Worker serves as static assets) |
+| Deploy command | `cd apps/api && npx wrangler deploy` |
 
 With either option, note the deployed URL, e.g. `https://discvault.yourname.workers.dev` —
 you'll need it in steps 10 and 11. This first deploy will 500 on auth routes until secrets are
