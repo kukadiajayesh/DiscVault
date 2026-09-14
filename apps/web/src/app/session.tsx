@@ -3,7 +3,7 @@ import { type AccountResponse, bootstrapAccount, signOutAndWipe } from "../accou
 import { vaultWorker } from "../db/rpc.js";
 import type { CatalogStats } from "../db/search.js";
 
-type SessionStatus = "loading" | "signed-in" | "signed-out" | "error" | "open-elsewhere";
+type SessionStatus = "loading" | "signed-in" | "signed-out" | "error";
 
 interface SessionContextValue {
   status: SessionStatus;
@@ -52,8 +52,6 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         // A 401/network failure while signed out is expected, not an app error.
         if (/401|Failed to fetch/.test(message)) {
           setStatus("signed-out");
-        } else if (message.includes("vault-open-elsewhere")) {
-          setStatus("open-elsewhere");
         } else {
           setStatus("error");
         }

@@ -17,7 +17,7 @@ Snapshot of the third build pass (2026-09-14, session 3): the Claude Design work
 | **Worker API** (Hono): Google-only Better Auth, vault from session only, `VaultDO` (SQLite Durable Object per vault), D1 directory, sign-up modes and user cap, global KV guards, purge cron, devices, account deletion, operator routes, backup export routes | `apps/api` | 9 Miniflare tests, including the **two-user isolation test**; `tsc` clean; `wrangler deploy --dry-run` bundles (447 KB gzipped) |
 | **Legacy archive builder**: `data/discvault.db` → `discvault-legacy.dvault` | `tools/import-legacy` | 1 test; ran on the real data: 311 discs, 42,840 folders, 345,215 files, 4.0 MB archive in ~3 s |
 | **Web app scaffold**: `vite.config.ts` (React, PWA via `vite-plugin-pwa` generateSW, `/api` dev proxy, worker `format: es`, sqlite-wasm excluded from `optimizeDeps`), `tsconfig.json`, `index.html`, `main.tsx`, TanStack Router with routes for all 14 screens + the disc-explorer browse splat and settings splat (real screens as of session 3, see below) | `apps/web` | `tsc` clean |
-| **Local DB worker**: SQLite WASM + OPFS SAH pool (one file per vault, `vault-{vault_id}.sqlite3`), `SqlDb` adapter over the oo1 API, Web Locks so a second tab is refused rather than proxied, `navigator.storage.persist()`/`estimate()`, Comlink API (`open`, `close`, `wipe`, `search`, `stats`, `previewArchive`, `importArchive`, `exportArchive`, `sync`, `deviceId`) | `apps/web/src/db/worker.ts`, `db/rpc.ts` | `tsc` clean (Comlink/OPFS calls themselves need a browser, see §3.5) |
+| **Local DB worker**: SQLite WASM + OPFS SAH pool (one file per vault, `vault-{vault_id}.sqlite3`), `SqlDb` adapter over the oo1 API, Web Locks elect one tab as *leader* (the only one that opens SQLite); every other tab is a *follower* that proxies each call to the leader over `BroadcastChannel` (`LeaderChannel`) and is promoted automatically if the leader tab closes, `navigator.storage.persist()`/`estimate()`, Comlink API (`open`, `close`, `wipe`, `search`, `stats`, `previewArchive`, `importArchive`, `exportArchive`, `sync`, `deviceId`) | `apps/web/src/db/worker.ts`, `db/leader-channel.ts`, `db/rpc.ts` | `tsc` clean; `leader-channel.ts` unit-tested directly (Node's `BroadcastChannel`, 5 tests); the election/promotion path itself needs a browser, see §3.5 |
 | **Archive import/export**: unzip + Zod manifest validation + part-hash + pack-hash verification, preview (counts, missing numbers, invalid dates, collisions), import (per-disc transaction: `writeRow` + local pack fields + `importPackParts` + staged `pending_pack_part` + `pack_commit` outbox entry, in that order so outbox `rowid` ordering is correct), skip/replace/renumber collision handling, export rebuilds `.dvault` from the local DB | `apps/web/src/archive/{import,export}.ts` | `tsc` clean, exercised indirectly by `db/packs.ts` tests |
 | **Account layer**: Better Auth React client (`basePath: /api/auth`), Google sign-in/out, local account list in `localStorage` (profile + vault id + last used, so the app can open offline to a picker), `bootstrapAccount()` (`GET /api/account` → open vault DB → register device), `signOutAndWipe()` (deletes only that vault's OPFS file) | `apps/web/src/account` | `tsc` clean |
 | **Repo tooling**: `biome.json`, `.github/workflows/ci.yml` (install, lint, typecheck, test), `README.md` (Google OAuth client, `.dev.vars`, D1 migrate, `pnpm dev:api`/`dev:web`) | root, `.github/` | `pnpm lint` clean over the whole repo |
@@ -32,6 +32,21 @@ All 39 tests across the 5 tested workspace projects pass; `pnpm typecheck` and `
 clean over the whole repo, including `apps/web` (which had neither before this pass).
 
 ---
+
+## 1.5 AI disc classification (added 2026-09-14)
+On-demand only, per the user's own choice of scope (whole-disc, not per-extension) and trigger
+(a button, not automatic). Gemini's free tier needs no payment method, so it fits
+[[free-tier-only]] without a Cloudflare secret or server route: the disc's folder/file *names and
+counts* (never file contents — the server never has those either) are summarized client-side
+(`db/catalog.ts#buildDiscAiSummary`), sent straight from the browser to Gemini with the user's own
+API key (Settings → AI, `ai/gemini-key.ts`, `localStorage` only — never synced, never sent
+anywhere but Google's API), and the result is written into `disc.meta.ai` (`disc.meta` is a
+free-form synced JSON column, so this needed no schema/migration change). `DiscExplorer.tsx`'s
+Overview tab has the "Analyze with AI" / "Re-analyze" button and result card.
+Known gaps: no retry/backoff on Gemini rate limits (a 429 just surfaces as an error under the
+button); no cost/quota UI (nothing to show — the free tier has no billing to track); whole-disc
+classification only, not per-extension category suggestions (the other option from that decision,
+not built).
 
 ## 2. Pending
 
@@ -68,9 +83,11 @@ component, matching the design. Left for a later pass:
       conflict → `conflict` row, rejected → blocked.
 - [ ] Worker test: `GET /api/auth/*` with Better Auth against D1 (sign-up hook creates the vault;
       invite-only or full blocks sign-up). Needs a mocked Google token endpoint.
-- [ ] Browser-only paths that `tsc` checks but nothing runs yet: the OPFS SAH pool itself, the Web
-      Locks "second tab refused" behavior, `navigator.storage.persist()`. Needs Playwright (or at
-      least a real browser test runner) — `node:sqlite` can't stand in for these.
+- [ ] Browser-only paths that `tsc` checks but nothing runs yet: the OPFS SAH pool itself, the
+      leader/follower election and promotion-on-close handover (`db/worker.ts`'s use of
+      `navigator.locks`; the `BroadcastChannel` RPC itself is covered by
+      `test/leader-channel.test.ts`), `navigator.storage.persist()`. Needs Playwright (or at least
+      a real multi-tab browser test runner) — `node:sqlite` can't stand in for these.
 - [ ] Playwright offline tests (after screens): search offline, edit offline, reconnect.
 
 ### 2.3 Repo tooling still pending
@@ -112,9 +129,10 @@ component, matching the design. Left for a later pass:
 
 | # | Item | Detail |
 |---|---|---|
-| 1 | Multi-tab DB access (was open) | A second tab is refused (`vault-open-elsewhere`) rather than proxied through a leader tab via `BroadcastChannel`. Simpler, no cross-tab RPC layer; a UI later can show "open in another tab". Revisit if that UX turns out to matter. |
+| 1 | Multi-tab DB access (was open) | **Reversed 2026-09-14** — see #4 below. Originally: a second tab was refused (`vault-open-elsewhere`) rather than proxied through a leader tab via `BroadcastChannel`. |
 | 2 | Local account list storage | `localStorage`, not a local DB table — it has to be readable before any vault DB is chosen/opened. Convenience only (`GET /api/account` is still the source of truth on every bootstrap). |
 | 3 | Local import of pack-metadata columns | `writeRow` correctly rejects `serverOnly` columns (`pack_hash`, `folder_count`, etc. — a client must never push them). Archive import therefore writes those via a direct `UPDATE` after `writeRow`, then confirms them for real through the `pack_commit` outbox entry once pushed. |
+| 4 | Multi-tab DB access (2026-09-14) | Reversed decision #1: a second tab is now proxied through a leader tab instead of refused. Every tab still races a Web Lock (`discvault:vault:{id}`) with `ifAvailable: true`; the winner opens SQLite and becomes *leader*, losers become *followers* and forward every call to the leader over a per-vault `BroadcastChannel` (`LeaderChannel`). A follower also opens a second, blocking `navigator.locks.request()` on the same name — Web Locks release automatically when the holding tab's worker is torn down (close/navigate/crash), so that request resolves and promotes the follower to leader with no heartbeat needed. `session.tsx`'s `"open-elsewhere"` status and its `RequireAuth` UI are gone since a second tab is no longer refused. Known gap: `wipe()` forwards to the leader for correctness, but a multi-tab sign-out-and-wipe doesn't broadcast a "vault gone" notice to *other* still-open follower tabs (they'd just start a fresh empty vault if one gets promoted afterward) — no cross-tab session-invalidation mechanism exists yet, in or out of this change. |
 
 ## 4. Earlier decisions and mismatches (still open)
 

@@ -1,6 +1,9 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
+import { readDiscClassification } from "../ai/classification.js";
+import { classifyDiscWithGemini } from "../ai/gemini.js";
+import { getGeminiApiKey } from "../ai/gemini-key.js";
 import type { FolderChild } from "../db/catalog.js";
 import { vaultWorker } from "../db/rpc.js";
 import { formatCount, formatDate, formatSizeKb } from "../ui/format.js";
@@ -25,6 +28,8 @@ export default function DiscExplorer() {
   const [selectedFile, setSelectedFile] = useState<FolderChild | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [notes, setNotes] = useState<string | null>(null);
+  const [analyzing, setAnalyzing] = useState(false);
+  const [aiError, setAiError] = useState<string | null>(null);
 
   const discQuery = useQuery({ queryKey: ["disc", discNo], queryFn: () => vaultWorker().getDisc(discNo) });
   const entriesQuery = useQuery({
@@ -69,7 +74,29 @@ export default function DiscExplorer() {
     navigate({ to: "/discs" });
   };
 
+  const analyzeWithAi = async () => {
+    const apiKey = getGeminiApiKey();
+    if (!apiKey) {
+      setAiError("Add a Gemini API key in Settings → AI first.");
+      return;
+    }
+    setAnalyzing(true);
+    setAiError(null);
+    try {
+      const summary = await vaultWorker().discAiSummary(discNo);
+      if (!summary) throw new Error("disc not found");
+      const classification = await classifyDiscWithGemini(apiKey, summary);
+      await vaultWorker().saveDiscClassification(discNo, classification);
+      await queryClient.invalidateQueries({ queryKey: ["disc", discNo] });
+    } catch (err) {
+      setAiError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setAnalyzing(false);
+    }
+  };
+
   const d = discQuery.data;
+  const aiClassification = readDiscClassification(d?.meta ?? null);
   const capKb = /9$/.test(d?.media_type ?? "") ? 8_500_000 : 4_700_000;
   const pct = d && d.total_kb > 0 ? Math.min(100, Math.round((d.total_kb / capKb) * 100)) : 0;
 
@@ -433,6 +460,55 @@ export default function DiscExplorer() {
                   <span style={{ color: "var(--dv-text-3)" }}>{formatCount(e.files)}</span>
                 </div>
               ))}
+            </div>
+            <div
+              style={{
+                padding: 16,
+                border: "1px solid var(--dv-border)",
+                borderRadius: 11,
+                display: "flex",
+                flexDirection: "column",
+                gap: 10,
+              }}
+            >
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+                <span style={{ font: "600 13px/1 'Instrument Sans', system-ui, sans-serif" }}>AI classification</span>
+                <button
+                  type="button"
+                  onClick={analyzeWithAi}
+                  disabled={analyzing}
+                  style={{
+                    minHeight: 26,
+                    padding: "0 10px",
+                    border: "1px solid var(--dv-border-2)",
+                    borderRadius: 7,
+                    background: "var(--dv-bg-sub)",
+                    font: "500 11px/1 'Instrument Sans', system-ui, sans-serif",
+                    cursor: analyzing ? "default" : "pointer",
+                    opacity: analyzing ? 0.6 : 1,
+                  }}
+                >
+                  {analyzing ? "Analyzing…" : aiClassification ? "Re-analyze" : "Analyze with AI"}
+                </button>
+              </div>
+              {aiClassification ? (
+                <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                  <span style={{ font: "600 13px/1.3 'Instrument Sans', system-ui, sans-serif" }}>{aiClassification.label}</span>
+                  <span style={{ font: "400 12px/1.4 'Instrument Sans', system-ui, sans-serif", color: "var(--dv-text-2)" }}>
+                    {aiClassification.summary}
+                  </span>
+                  <span className="dv-mono" style={{ fontSize: 10, color: "var(--dv-text-3)" }}>
+                    {aiClassification.confidence} confidence · {formatDate(aiClassification.analyzedAt)}
+                  </span>
+                </div>
+              ) : (
+                <span style={{ font: "400 12px/1.4 'Instrument Sans', system-ui, sans-serif", color: "var(--dv-text-3)" }}>
+                  Not analyzed yet — suggests a category from this disc's folder and file names via Gemini.
+                </span>
+              )}
+              {aiError && (
+                <span style={{ font: "400 11px/1.4 'Instrument Sans', system-ui, sans-serif", color: "var(--dv-err)" }}>{aiError}</span>
+              )}
             </div>
           </div>
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>

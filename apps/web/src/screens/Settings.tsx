@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams } from "@tanstack/react-router";
 import { type ChangeEvent, type ReactNode, useRef, useState } from "react";
 import { signOut as authSignOut } from "../account/auth-client.js";
 import { apiRequest } from "../account/session.js";
+import { getGeminiApiKey, setGeminiApiKey } from "../ai/gemini-key.js";
 import { type Preferences, usePreferences } from "../app/preferences.js";
 import { useSession } from "../app/session.js";
 import { useTheme } from "../app/theme.js";
@@ -13,11 +14,12 @@ import { ConfirmDialog } from "../ui/primitives.js";
 
 const CATEGORIES = ["video", "audio", "image", "document", "archive", "software", "other"];
 
-type Tab = "account" | "preferences" | "categories" | "import" | "operator";
+type Tab = "account" | "preferences" | "categories" | "ai" | "import" | "operator";
 const TABS: { id: Tab; label: string }[] = [
   { id: "account", label: "Account" },
   { id: "preferences", label: "Preferences" },
   { id: "categories", label: "Categories" },
+  { id: "ai", label: "AI" },
   { id: "import", label: "Import & export" },
   { id: "operator", label: "Operator" },
 ];
@@ -70,6 +72,7 @@ export default function Settings() {
         {tab === "account" && <AccountTab />}
         {tab === "preferences" && <PreferencesTab />}
         {tab === "categories" && <CategoriesTab />}
+        {tab === "ai" && <AiTab />}
         {tab === "import" && <ImportExportTab />}
         {tab === "operator" && account?.operator && <OperatorTab />}
       </div>
@@ -371,6 +374,69 @@ function CategoriesTab() {
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+function AiTab() {
+  const [key, setKey] = useState(() => getGeminiApiKey() ?? "");
+  const [saved, setSaved] = useState(false);
+
+  const save = () => {
+    setGeminiApiKey(key.trim() || null);
+    setSaved(true);
+    window.setTimeout(() => setSaved(false), 1500);
+  };
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 16, maxWidth: 560 }}>
+      <SectionTitle>AI</SectionTitle>
+      <span style={{ font: "400 13px/1.5 'Instrument Sans', system-ui, sans-serif", color: "var(--dv-text-2)" }}>
+        Add a free Gemini API key to get an AI-suggested category for a disc (from its folder and file names — this app never sends file
+        contents anywhere). The key is stored only in this browser and sent only to Google's API, never synced or shared. Get one at{" "}
+        <a href="https://aistudio.google.com/apikey" target="_blank" rel="noreferrer" style={{ color: "var(--dv-accent)" }}>
+          aistudio.google.com/apikey
+        </a>
+        .
+      </span>
+      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        <span style={{ font: "600 13px/1 'Instrument Sans', system-ui, sans-serif" }}>Gemini API key</span>
+        <div style={{ display: "flex", gap: 8 }}>
+          <input
+            type="password"
+            value={key}
+            onChange={(e) => setKey(e.target.value)}
+            placeholder="AIza…"
+            autoComplete="off"
+            style={{
+              flex: 1,
+              minWidth: 0,
+              height: 34,
+              padding: "0 10px",
+              border: "1px solid var(--dv-border)",
+              borderRadius: 8,
+              background: "var(--dv-bg-sub)",
+              font: "400 12px/1 'JetBrains Mono', monospace",
+            }}
+          />
+          <button
+            type="button"
+            onClick={save}
+            style={{
+              minHeight: 34,
+              padding: "0 13px",
+              border: 0,
+              borderRadius: 8,
+              background: "var(--dv-accent)",
+              color: "#fff",
+              font: "500 12px/1 'Instrument Sans', system-ui, sans-serif",
+              cursor: "pointer",
+            }}
+          >
+            {saved ? "Saved" : "Save"}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

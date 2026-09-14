@@ -3,48 +3,43 @@ import type { PackFile, PackFolder } from "@discvault/sync-protocol";
 import { uuidv7 } from "@discvault/sync-protocol";
 import sqlite3InitModule, { type OpfsSAHPoolDatabase, type SAHPoolUtil } from "@sqlite.org/sqlite-wasm";
 import { expose } from "comlink";
+import { mergeDiscClassification, type StoredClassification } from "../ai/classification.js";
 import { type ExportResult, exportArchive } from "../archive/export.js";
-import {
-  type ArchiveDiscPreview,
-  type ArchivePreview,
-  type CollisionResolution,
-  type ImportResult,
-  importArchive,
-  previewArchive,
-} from "../archive/import.js";
+import { type ArchiveDiscPreview, type CollisionResolution, type ImportResult, importArchive, previewArchive } from "../archive/import.js";
 import { SyncEngine, type SyncReport } from "../sync/engine.js";
 import { httpTransport } from "../sync/transport.js";
 import {
   allExtensionCounts,
-  type CategoryCount,
+  buildDiscAiSummary,
   categoryBreakdown,
-  type DiscDetail,
-  type DiscListItem,
-  type ExtCount,
-  type ExtensionCount,
   extensionBreakdown,
   extensionCategoryMap,
-  type FileEntry,
-  type FolderChild,
   findFolderByPath,
   getDisc,
   largestFiles,
   listDiscs,
   listFolderChildren,
-  type MediaTypeCount,
   mediaTypeBreakdown,
   missingDiscNumbers,
 } from "./catalog.js";
+import { LeaderChannel } from "./leader-channel.js";
 import { getState, prepareLocalDb, setState } from "./local-db.js";
-import { type CommittedPack, commitScannedPack, removeDiscCatalog, type ScannedDiscMeta } from "./packs.js";
-import { deleteRow, type OutboxRow, writeRow } from "./rows.js";
-import { type CatalogStats, catalogStats, type FileHit, type FolderHit, searchFiles, searchFolders } from "./search.js";
-import { type RecentSearch, recentSearches, recordSearch } from "./search-history.js";
-import { type ConflictRow, discardOutboxEntry, dismissConflict, keepTheirs, listConflicts, listOutbox } from "./sync-admin.js";
+import { commitScannedPack, removeDiscCatalog, type ScannedDiscMeta } from "./packs.js";
+import { deleteRow, writeRow } from "./rows.js";
+import { type CatalogStats, catalogStats, searchFiles, searchFolders } from "./search.js";
+import { recentSearches, recordSearch } from "./search-history.js";
+import { discardOutboxEntry, dismissConflict, keepTheirs, listConflicts, listOutbox } from "./sync-admin.js";
 
 /**
  * Runs inside a dedicated Worker (SQLite WASM cannot use OPFS synchronous access handles on the
  * main thread). One SQLite file per vault, `vault-{vault_id}.sqlite3`, in a shared SAH pool (§9.1).
+ *
+ * Only one tab may hold that file open at a time, so tabs race a Web Lock to become the vault's
+ * *leader*; every other ("follower") tab never touches SQLite at all and instead forwards each
+ * call to the leader over a `BroadcastChannel` (`LeaderChannel`, per vault). Web Locks release
+ * automatically when the holding tab's worker is torn down (tab closed, navigated away, crashed),
+ * so a follower waiting on the same lock name is promoted to leader in its place with no heartbeat
+ * needed. Revisits decision #1 in PENDING.md, which refused a second tab instead of proxying it.
  */
 
 let poolPromise: Promise<SAHPoolUtil> | null = null;
@@ -98,18 +93,19 @@ function wasmSqlDb(raw: OpfsSAHPoolDatabase): SqlDb {
 type ReleaseFn = () => void;
 
 /**
- * Only one tab may hold a vault's SAH pool file open at a time. Rather than proxy writes through
- * a leader tab, a second tab is simply refused (`vault-open-elsewhere`) and shows read-only or
- * "open in another tab" (decision #10).
+ * Requests a vault's exclusivity lock. With `ifAvailable: true` this resolves immediately —
+ * `null` if another tab already holds it — used for the initial leader race. Without it, the
+ * request queues and only resolves once the current holder releases the lock — used to wait for
+ * promotion into leader; pass `signal` to give up on that wait (e.g. this tab stopped following).
  */
-async function acquireExclusiveLock(name: string): Promise<ReleaseFn | null> {
-  return new Promise((resolve) => {
+async function requestLock(name: string, opts: { ifAvailable?: boolean; signal?: AbortSignal } = {}): Promise<ReleaseFn | null> {
+  return new Promise((resolve, reject) => {
     let release: ReleaseFn = () => {};
     const held = new Promise<void>((r) => {
       release = r;
     });
     navigator.locks
-      .request(name, { mode: "exclusive", ifAvailable: true }, async (lock) => {
+      .request(name, { mode: "exclusive", ifAvailable: opts.ifAvailable, signal: opts.signal }, async (lock) => {
         if (!lock) {
           resolve(null);
           return;
@@ -117,7 +113,10 @@ async function acquireExclusiveLock(name: string): Promise<ReleaseFn | null> {
         resolve(release);
         await held;
       })
-      .catch(() => {});
+      .catch((error: unknown) => {
+        if (error instanceof Error && error.name === "AbortError") resolve(null);
+        else reject(error);
+      });
   });
 }
 
@@ -140,11 +139,46 @@ interface OpenVault {
   release: ReleaseFn;
 }
 
+type Role = "leader" | "follower" | null;
+
+/** Set only while this tab is the leader — it's the one tab with a real SQLite connection. */
 let current: OpenVault | null = null;
+let role: Role = null;
+/** The vaultId this tab has open, in either role; guards against opening a second vault per tab. */
+let openVaultId: string | null = null;
+let channel: LeaderChannel | null = null;
+/** Cached once the leader has actually finished opening SQLite; served to followers' "open" calls. */
+let openResult: OpenResult | null = null;
+let cancelPromotion: (() => void) | null = null;
 
 function requireDb(): SqlDb {
   if (!current) throw new Error("no vault is open");
   return current.db;
+}
+
+function isLeader(): boolean {
+  return role === "leader";
+}
+
+/** Wraps a local DB operation so a follower tab forwards it to the leader instead of running it. */
+function remote<A extends unknown[], R>(name: string, fn: (...args: A) => R | Promise<R>): (...args: A) => Promise<R> {
+  return async (...args: A) => {
+    if (isLeader()) return fn(...args);
+    if (!channel) throw new Error("no vault is open");
+    return channel.call<R>(name, args);
+  };
+}
+
+function teardown(): void {
+  cancelPromotion?.();
+  cancelPromotion = null;
+  current?.release();
+  current = null;
+  openResult = null;
+  role = null;
+  openVaultId = null;
+  channel?.close();
+  channel = null;
 }
 
 export interface OpenResult {
@@ -152,173 +186,206 @@ export interface OpenResult {
   storage: StorageStatus;
 }
 
+/** Opens this tab's own SQLite connection and starts serving calls forwarded by follower tabs. */
+async function becomeLeader(vaultId: string, release: ReleaseFn): Promise<OpenResult> {
+  role = "leader";
+  let resolveReady: () => void = () => {};
+  const ready = new Promise<void>((r) => {
+    resolveReady = r;
+  });
+  channel?.serve(async (method, args) => {
+    await ready;
+    if (method === "open") {
+      if (!openResult) throw new Error("vault failed to open");
+      return openResult;
+    }
+    const handler = (api as Record<string, (...a: unknown[]) => unknown>)[method];
+    if (!handler) throw new Error(`unknown vault method: ${method}`);
+    return handler(...args);
+  });
+
+  const poolUtil = await pool();
+  const raw = new poolUtil.OpfsSAHPoolDb(vaultFilename(vaultId));
+  const db = wasmSqlDb(raw);
+  prepareLocalDb(db);
+  setState(db, "vault_id", vaultId);
+  current = { vaultId, db, release };
+  openResult = { stats: catalogStats(db), storage: await ensurePersistence() };
+  resolveReady();
+  return openResult;
+}
+
+/**
+ * Waits for the current leader to go away — its lock releases automatically when its tab/worker
+ * is torn down — and takes over as leader in its place. Cancelled by `cancelPromotion()` if this
+ * tab stops following before that happens (e.g. `close()`).
+ */
+function watchForPromotion(vaultId: string, lockName: string): void {
+  const controller = new AbortController();
+  cancelPromotion = () => controller.abort();
+  requestLock(lockName, { signal: controller.signal })
+    .then((release) => {
+      if (!release || role !== "follower") return;
+      cancelPromotion = null;
+      return becomeLeader(vaultId, release);
+    })
+    .catch(() => {});
+}
+
 const api = {
   /** Opens (creating and migrating if needed) the local DB for one vault. Idempotent per vault. */
   async open(vaultId: string): Promise<OpenResult> {
-    if (current && current.vaultId !== vaultId) throw new Error("another vault is already open in this tab; call close() first");
-    if (!current) {
-      const release = await acquireExclusiveLock(`discvault:vault:${vaultId}`);
-      if (!release) throw new Error("vault-open-elsewhere");
-      const poolUtil = await pool();
-      const raw = new poolUtil.OpfsSAHPoolDb(vaultFilename(vaultId));
-      const db = wasmSqlDb(raw);
-      prepareLocalDb(db);
-      setState(db, "vault_id", vaultId);
-      current = { vaultId, db, release };
+    if (openVaultId && openVaultId !== vaultId) throw new Error("another vault is already open in this tab; call close() first");
+    if (role === "leader" && current) return { stats: catalogStats(current.db), storage: await ensurePersistence() };
+    if (role === "follower") {
+      if (!channel) throw new Error("no vault is open");
+      return channel.call<OpenResult>("open", [vaultId], 20_000);
     }
-    return { stats: catalogStats(current.db), storage: await ensurePersistence() };
+
+    channel = new LeaderChannel(vaultId);
+    openVaultId = vaultId;
+    const release = await requestLock(`discvault:vault:${vaultId}`, { ifAvailable: true });
+    if (release) return becomeLeader(vaultId, release);
+
+    role = "follower";
+    watchForPromotion(vaultId, `discvault:vault:${vaultId}`);
+    return channel.call<OpenResult>("open", [vaultId], 20_000);
   },
 
-  /** Releases the tab's exclusive lock without deleting anything. */
+  /** Releases the tab's exclusive lock (or stops following) without deleting anything. */
   async close(): Promise<void> {
-    current?.release();
-    current = null;
+    teardown();
   },
 
-  /** "Sign out & wipe" (§3.4): deletes only this vault's OPFS file. */
+  /** "Sign out & wipe" (§3.4): deletes only this vault's OPFS file. Always runs on the leader,
+   * since only it holds the file open — a follower forwards the call rather than racing it. */
   async wipe(vaultId: string): Promise<void> {
-    if (current?.vaultId === vaultId) {
-      current.release();
-      current = null;
+    if (role === "follower" && openVaultId === vaultId) {
+      if (!channel) throw new Error("no vault is open");
+      await channel.call("wipe", [vaultId]);
+      teardown();
+      return;
     }
+    const wasLeader = current?.vaultId === vaultId;
+    if (wasLeader) channel?.stopServing();
     (await pool()).unlink(vaultFilename(vaultId));
+    if (wasLeader) teardown();
   },
 
-  async search(query: string, options: { limit?: number; offset?: number } = {}): Promise<FileHit[]> {
-    return searchFiles(requireDb(), query, options);
-  },
+  search: remote("search", (query: string, options: { limit?: number; offset?: number } = {}) => searchFiles(requireDb(), query, options)),
 
-  async searchFolders(query: string, options: { limit?: number; offset?: number } = {}): Promise<FolderHit[]> {
-    return searchFolders(requireDb(), query, options);
-  },
+  searchFolders: remote("searchFolders", (query: string, options: { limit?: number; offset?: number } = {}) =>
+    searchFolders(requireDb(), query, options),
+  ),
 
-  async stats(): Promise<CatalogStats> {
-    return catalogStats(requireDb());
-  },
+  stats: remote("stats", () => catalogStats(requireDb())),
 
   /** Persistence + quota (§8: Sync & storage, and the shell's footer). */
-  async storageEstimate(): Promise<StorageStatus> {
+  storageEstimate: remote("storageEstimate", () => {
     requireDb();
     return ensurePersistence();
-  },
+  }),
 
-  async listDiscs(): Promise<DiscListItem[]> {
-    return listDiscs(requireDb());
-  },
+  listDiscs: remote("listDiscs", () => listDiscs(requireDb())),
 
-  async missingDiscNumbers(): Promise<number[]> {
-    return missingDiscNumbers(requireDb());
-  },
+  missingDiscNumbers: remote("missingDiscNumbers", () => missingDiscNumbers(requireDb())),
 
   /** Disc library "Mark retired / lost" on a never-scanned disc number (§8: Disc library). */
-  async setDiscStatus(discNo: number, status: string): Promise<void> {
+  setDiscStatus: remote("setDiscStatus", (discNo: number, status: string) => {
     writeRow(requireDb(), "disc", String(discNo), { status });
-  },
+  }),
 
-  async setDiscNotes(discNo: number, notes: string): Promise<void> {
+  setDiscNotes: remote("setDiscNotes", (discNo: number, notes: string) => {
     writeRow(requireDb(), "disc", String(discNo), { notes });
-  },
+  }),
 
   /** Scan wizard "Save" (§8 screen 7, step 5): commits a live folder scan as a new disc pack. */
-  async commitScannedPack(discNo: number, meta: ScannedDiscMeta, folders: PackFolder[], files: PackFile[]): Promise<CommittedPack> {
-    return commitScannedPack(requireDb(), discNo, meta, folders, files);
-  },
+  commitScannedPack: remote("commitScannedPack", (discNo: number, meta: ScannedDiscMeta, folders: PackFolder[], files: PackFile[]) =>
+    commitScannedPack(requireDb(), discNo, meta, folders, files),
+  ),
 
   /** Disc explorer "Delete" (§8 overlay E): removes the disc row and its local catalog. */
-  async deleteDisc(discNo: number): Promise<void> {
+  deleteDisc: remote("deleteDisc", (discNo: number) => {
     const db = requireDb();
     db.transaction(() => {
       removeDiscCatalog(db, discNo);
       deleteRow(db, "disc", String(discNo));
     });
-  },
+  }),
 
-  async getDisc(discNo: number): Promise<DiscDetail | undefined> {
-    return getDisc(requireDb(), discNo);
-  },
+  getDisc: remote("getDisc", (discNo: number) => getDisc(requireDb(), discNo)),
 
   /** `relPath` is the folder's path from the disc root ('' for the root itself). */
-  async listFolder(discNo: number, relPath: string): Promise<FolderChild[]> {
+  listFolder: remote("listFolder", (discNo: number, relPath: string) => {
     const db = requireDb();
     return listFolderChildren(db, discNo, findFolderByPath(db, discNo, relPath));
-  },
+  }),
 
-  async categoryBreakdown(discNo?: number): Promise<CategoryCount[]> {
-    return categoryBreakdown(requireDb(), discNo);
-  },
+  categoryBreakdown: remote("categoryBreakdown", (discNo?: number) => categoryBreakdown(requireDb(), discNo)),
 
-  async extensionBreakdown(discNo: number): Promise<ExtensionCount[]> {
-    return extensionBreakdown(requireDb(), discNo);
-  },
+  extensionBreakdown: remote("extensionBreakdown", (discNo: number) => extensionBreakdown(requireDb(), discNo)),
 
-  async largestFiles(discNo: number): Promise<FileEntry[]> {
-    return largestFiles(requireDb(), discNo);
-  },
+  largestFiles: remote("largestFiles", (discNo: number) => largestFiles(requireDb(), discNo)),
 
-  async mediaTypeBreakdown(): Promise<MediaTypeCount[]> {
-    return mediaTypeBreakdown(requireDb());
-  },
+  /** Names-and-counts summary of a disc, sent to Gemini for on-demand classification (§ AI). */
+  discAiSummary: remote("discAiSummary", (discNo: number) => buildDiscAiSummary(requireDb(), discNo)),
 
-  async extensionCategoryMap(): Promise<Record<string, string>> {
-    return extensionCategoryMap(requireDb());
-  },
+  /** Saves a disc classification (from `ai/gemini.ts`, run client-side) into `disc.meta.ai`. */
+  saveDiscClassification: remote("saveDiscClassification", (discNo: number, classification: StoredClassification) => {
+    const db = requireDb();
+    const disc = getDisc(db, discNo);
+    if (!disc) throw new Error(`no such disc: ${discNo}`);
+    writeRow(db, "disc", String(discNo), { meta: mergeDiscClassification(disc.meta, classification) });
+  }),
 
-  async allExtensionCounts(): Promise<ExtCount[]> {
-    return allExtensionCounts(requireDb());
-  },
+  mediaTypeBreakdown: remote("mediaTypeBreakdown", () => mediaTypeBreakdown(requireDb())),
+
+  extensionCategoryMap: remote("extensionCategoryMap", () => extensionCategoryMap(requireDb())),
+
+  allExtensionCounts: remote("allExtensionCounts", () => allExtensionCounts(requireDb())),
 
   /** Settings → Categories: user override for one extension's category. */
-  async setCategoryOverride(ext: string, category: string): Promise<void> {
+  setCategoryOverride: remote("setCategoryOverride", (ext: string, category: string) => {
     writeRow(requireDb(), "category_override", ext, { category });
-  },
+  }),
 
-  async recordSearch(query: string, resultCount: number): Promise<void> {
+  recordSearch: remote("recordSearch", (query: string, resultCount: number) => {
     recordSearch(requireDb(), query, resultCount);
-  },
+  }),
 
-  async recentSearches(limit?: number): Promise<RecentSearch[]> {
-    return recentSearches(requireDb(), limit);
-  },
+  recentSearches: remote("recentSearches", (limit?: number) => recentSearches(requireDb(), limit)),
 
-  async previewArchive(zipBytes: Uint8Array): Promise<ArchivePreview> {
-    return previewArchive(requireDb(), zipBytes);
-  },
+  previewArchive: remote("previewArchive", (zipBytes: Uint8Array) => previewArchive(requireDb(), zipBytes)),
 
   /** `resolutions` maps a colliding disc_no to how to handle it; unlisted collisions are skipped. */
-  async importArchive(zipBytes: Uint8Array, resolutions: Record<number, CollisionResolution> = {}): Promise<ImportResult> {
-    return importArchive(requireDb(), zipBytes, { resolve: (discNo) => resolutions[discNo] ?? "skip" });
-  },
+  importArchive: remote(
+    "importArchive",
+    (zipBytes: Uint8Array, resolutions: Record<number, CollisionResolution> = {}): Promise<ImportResult> =>
+      importArchive(requireDb(), zipBytes, { resolve: (discNo) => resolutions[discNo] ?? "skip" }),
+  ),
 
-  async exportArchive(): Promise<ExportResult> {
-    return exportArchive(requireDb());
-  },
+  exportArchive: remote("exportArchive", (): Promise<ExportResult> => exportArchive(requireDb())),
 
-  async sync(): Promise<SyncReport> {
-    return new SyncEngine(requireDb(), httpTransport()).sync();
-  },
+  sync: remote("sync", (): Promise<SyncReport> => new SyncEngine(requireDb(), httpTransport()).sync()),
 
-  async listOutbox(): Promise<OutboxRow[]> {
-    return listOutbox(requireDb());
-  },
+  listOutbox: remote("listOutbox", () => listOutbox(requireDb())),
 
-  async discardOutboxEntry(id: string): Promise<void> {
+  discardOutboxEntry: remote("discardOutboxEntry", (id: string) => {
     discardOutboxEntry(requireDb(), id);
-  },
+  }),
 
-  async listConflicts(): Promise<ConflictRow[]> {
-    return listConflicts(requireDb());
-  },
+  listConflicts: remote("listConflicts", () => listConflicts(requireDb())),
 
-  async keepTheirs(conflictId: string): Promise<void> {
+  keepTheirs: remote("keepTheirs", (conflictId: string) => {
     keepTheirs(requireDb(), conflictId);
-  },
+  }),
 
-  async dismissConflict(conflictId: string): Promise<void> {
+  dismissConflict: remote("dismissConflict", (conflictId: string) => {
     dismissConflict(requireDb(), conflictId);
-  },
+  }),
 
   /** Stable per-device id, stored in the vault's own DB so it survives across sign-ins here. */
-  async deviceId(): Promise<string> {
+  deviceId: remote("deviceId", () => {
     const db = requireDb();
     let id = getState(db, "device_id");
     if (!id) {
@@ -326,7 +393,7 @@ const api = {
       setState(db, "device_id", id);
     }
     return id;
-  },
+  }),
 };
 
 export type VaultWorkerApi = typeof api;

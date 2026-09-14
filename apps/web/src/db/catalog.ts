@@ -42,12 +42,13 @@ export function missingDiscNumbers(db: SqlDb): number[] {
 
 export interface DiscDetail extends DiscListItem {
   notes: string | null;
+  meta: string | null;
 }
 
 export function getDisc(db: SqlDb, discNo: number): DiscDetail | undefined {
   return db.get<DiscDetail>(
     `SELECT d.disc_no, d.label, d.title, d.media_type, d.status, d.location_id, d.location_slot,
-            l.name AS location_name, d.folder_count, d.file_count, d.total_kb, d.scanned_at, d.updated_at, d.notes
+            l.name AS location_name, d.folder_count, d.file_count, d.total_kb, d.scanned_at, d.updated_at, d.notes, d.meta
      FROM disc d
      LEFT JOIN location l ON l.id = d.location_id AND l.deleted_at IS NULL
      WHERE d.disc_no = ? AND d.deleted_at IS NULL`,
@@ -189,4 +190,45 @@ export function largestFiles(db: SqlDb, discNo: number, limit = 20): FileEntry[]
       [discNo, limit],
     )
     .map((f): FileEntry => ({ kind: "file", ...f }));
+}
+
+export interface DiscAiSummary {
+  discNo: number;
+  title: string | null;
+  label: string | null;
+  mediaType: string | null;
+  folderCount: number;
+  fileCount: number;
+  totalKb: number;
+  topFolders: string[];
+  extensions: { ext: string; files: number }[];
+  sampleFileNames: string[];
+}
+
+/**
+ * Compact, names-and-counts summary of a disc's catalog (§ AI: disc classification) — never file
+ * contents, which this app doesn't have access to in the first place (only the catalog metadata
+ * is stored, on-device).
+ */
+export function buildDiscAiSummary(db: SqlDb, discNo: number): DiscAiSummary | undefined {
+  const disc = getDisc(db, discNo);
+  if (!disc) return undefined;
+  const topFolders = listFolderChildren(db, discNo, null)
+    .filter((c): c is FolderEntry => c.kind === "folder")
+    .slice(0, 40)
+    .map((f) => f.name);
+  const extensions = extensionBreakdown(db, discNo, 20).map((e) => ({ ext: e.ext, files: e.files }));
+  const sampleFileNames = largestFiles(db, discNo, 20).map((f) => f.name);
+  return {
+    discNo,
+    title: disc.title,
+    label: disc.label,
+    mediaType: disc.media_type,
+    folderCount: disc.folder_count,
+    fileCount: disc.file_count,
+    totalKb: disc.total_kb,
+    topFolders,
+    extensions,
+    sampleFileNames,
+  };
 }
