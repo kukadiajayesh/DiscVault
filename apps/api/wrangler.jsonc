@@ -1,44 +1,70 @@
 {
-  "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "discvault",
-  "main": "src/index.ts",
-  "compatibility_date": "2026-08-15",
-  "compatibility_flags": ["nodejs_compat"],
-
-  // The PWA is served as static assets (free, unlimited). Only /api/* runs the Worker.
-  "assets": {
-    "directory": "../web/dist",
-    "binding": "ASSETS",
-    "not_found_handling": "single-page-application",
-    "run_worker_first": ["/api/*"]
-  },
-
-  // Directory: users, sessions, vaults, sign-up settings, global usage guards. No catalog data.
-  "d1_databases": [
-    {
-      "binding": "DIRECTORY",
-      "database_name": "discvault-directory",
-      "database_id": "00000000-0000-0000-0000-000000000000",
-      "migrations_dir": "migrations"
-    }
-  ],
-
-  // One SQLite-backed Durable Object per vault: each user's own database.
-  "durable_objects": {
-    "bindings": [{ "name": "VAULT", "class_name": "VaultDO" }]
-  },
-  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["VaultDO"] }],
-
-  // Disc packs, keyed v:{vault_id}:pack:{disc_no}:{sha256}:{part}.
-  "kv_namespaces": [{ "binding": "PACKS", "id": "00000000000000000000000000000000" }],
-
-  // Daily clean-up of the KV purge queue (1 of 5 free cron triggers).
-  "triggers": { "crons": ["17 3 * * *"] },
-
-  "vars": {
-    "PUBLIC_ORIGIN": "http://localhost:8787",
-    "DEFAULT_SIGNUP_MODE": "invite"
-  }
-  // Secrets (wrangler secret put / .dev.vars): BETTER_AUTH_SECRET, GOOGLE_CLIENT_ID,
-  // GOOGLE_CLIENT_SECRET, OPS_TOKEN, OPERATOR_SUBS (comma-separated Google `sub`s).
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "discvault",
+	"main": "src/index.ts",
+	"compatibility_date": "2026-08-15",
+	"compatibility_flags": [
+		"nodejs_compat"
+	],
+	// The PWA is served as static assets (free, unlimited). Only /api/* runs the Worker.
+	"assets": {
+		"directory": "../web/dist",
+		"binding": "ASSETS",
+		"not_found_handling": "single-page-application",
+		"run_worker_first": [
+			"/api/*"
+		]
+	},
+	// Directory: users, sessions, vaults, sign-up settings, global usage guards. No catalog data.
+	"d1_databases": [
+		{
+			"binding": "DIRECTORY",
+			"database_name": "discvault-directory",
+			"database_id": "8e17a518-4ae9-4a6e-96ff-0ec563394429",
+			"migrations_dir": "migrations"
+		},
+		{
+			"binding": "discvault_directory",
+			"database_name": "discvault-directory",
+			"database_id": "8e17a518-4ae9-4a6e-96ff-0ec563394429",
+			"remote": true
+		}
+	],
+	// One SQLite-backed Durable Object per vault: each user's own database.
+	"durable_objects": {
+		"bindings": [
+			{
+				"name": "VAULT",
+				"class_name": "VaultDO"
+			}
+		]
+	},
+	"migrations": [
+		{
+			"tag": "v1",
+			"new_sqlite_classes": [
+				"VaultDO"
+			]
+		}
+	],
+	// Disc packs, keyed v:{vault_id}:pack:{disc_no}:{sha256}:{part}.
+	"kv_namespaces": [
+		{
+			"binding": "PACKS",
+			"id": "9c3a6d95a74440c4ae373ac90d9eecd4",
+			"remote": true
+		}
+	],
+	// Daily clean-up of the KV purge queue (1 of 5 free cron triggers).
+	"triggers": {
+		"crons": [
+			"17 3 * * *"
+		]
+	},
+	"vars": {
+		"PUBLIC_ORIGIN": "http://localhost:8787",
+		"DEFAULT_SIGNUP_MODE": "invite"
+	}
+	// Secrets (wrangler secret put / .dev.vars): BETTER_AUTH_SECRET, GOOGLE_CLIENT_ID,
+	// GOOGLE_CLIENT_SECRET, OPS_TOKEN, OPERATOR_SUBS (comma-separated Google `sub`s).
 }

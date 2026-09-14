@@ -35,13 +35,30 @@ Fill in `apps/api/.dev.vars`:
 | `OPS_TOKEN` | a long random token, used by the backup workflow and ops routes |
 | `OPERATOR_SUBS` | your Google account's `sub` (comma-separated if more than one), grants the operator UI |
 
-### 3. Local D1 database
+### 3. Cloudflare resources
+
+`apps/api/wrangler.jsonc` declares a D1 database and a KV namespace by ID. These IDs aren't
+credentials (they're useless without your account's API token), so the file is committed as-is
+— create the real resources and paste their IDs in:
+
+```sh
+cd apps/api
+npx wrangler d1 create discvault-directory       # paste database_id into both d1_databases entries
+npx wrangler kv namespace create PACKS           # paste id into kv_namespaces
+cd ../..
+```
+
+The actual secrets (`BETTER_AUTH_SECRET`, `GOOGLE_CLIENT_ID`, etc.) never go in this file — they
+live in `.dev.vars` (step 2, gitignored) locally and as encrypted Worker secrets in production
+(`DEPLOYMENT.md`).
+
+### 4. Local D1 database
 
 ```sh
 pnpm --filter @discvault/api db:migrate:local
 ```
 
-### 4. Run it
+### 5. Run it
 
 ```sh
 pnpm dev:api   # wrangler dev on :8787
@@ -63,6 +80,8 @@ pnpm import-legacy   # dvd_manager.mdb → discvault-legacy.dvault, uploads noth
 
 ## Deploying
 
-See `WEB_APP_ARCHITECTURE.md` §3.7 and `PENDING.md` §3.7 for the one-time Cloudflare setup (D1
-database, KV namespace, secrets, OAuth redirect for the production origin) before
-`wrangler deploy`.
+See `PENDING.md` §2.4 for the one-time Cloudflare setup (D1 database, KV namespace, secrets,
+OAuth redirect for the production origin) before `wrangler deploy`.
+
+For a click-by-click walkthrough of that setup — exact Cloudflare Dashboard and Google Cloud
+Console navigation, in order — see `DEPLOYMENT.md`.
