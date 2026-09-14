@@ -1,6 +1,16 @@
 import type { SqlDb } from "@discvault/schema";
-import { extensionOf, isValidCatalogDate, joinRelPath, type ParsedPackPart } from "@discvault/sync-protocol";
+import {
+  buildPack,
+  extensionOf,
+  isValidCatalogDate,
+  joinRelPath,
+  type PackFile,
+  type PackFolder,
+  type ParsedPackPart,
+  parsePackPart,
+} from "@discvault/sync-protocol";
 import { nowIso } from "./local-db.js";
+import { enqueue, writeRow } from "./rows.js";
 
 /** Removes a disc's folders and files (and their search index entries). */
 export function removeDiscCatalog(db: SqlDb, discNo: number): void {
@@ -65,4 +75,80 @@ export function importPackParts(db: SqlDb, discNo: number, packHash: string, par
     );
   });
   return { folders: first.folders.length, files };
+}
+
+export interface ScannedDiscMeta {
+  title: string | null;
+  media_type: string | null;
+  location_slot: string | null;
+  status: string;
+  notes?: string | null;
+}
+
+export interface CommittedPack {
+  folder_count: number;
+  file_count: number;
+  total_kb: number;
+}
+
+/**
+ * Builds a pack from a live scan (§8 screen 7) and commits it exactly like an archive import
+ * (`importArchive`, `apps/web/src/archive/import.ts`): the disc row through `writeRow`, the
+ * server-derived pack fields, the catalog rows, the gzipped parts staged for upload, and a
+ * `pack_commit` outbox entry enqueued after the disc row so it pushes second.
+ */
+export async function commitScannedPack(
+  db: SqlDb,
+  discNo: number,
+  meta: ScannedDiscMeta,
+  folders: PackFolder[],
+  files: PackFile[],
+): Promise<CommittedPack> {
+  const now = nowIso();
+  const pack = await buildPack({ disc_no: discNo, scanned_at: now, built_at: now, folders, files });
+  const parsedParts = await Promise.all(pack.parts.map((p) => parsePackPart(p.data)));
+  const packBytes = pack.parts.reduce((sum, p) => sum + p.bytes, 0);
+
+  db.transaction(() => {
+    writeRow(db, "disc", String(discNo), {
+      title: meta.title,
+      media_type: meta.media_type,
+      status: meta.status,
+      location_slot: meta.location_slot,
+      notes: meta.notes ?? null,
+    });
+    db.run(
+      `UPDATE disc SET folder_count = ?, file_count = ?, total_kb = ?, pack_hash = ?, pack_parts = ?,
+              pack_bytes = ?, pack_version = ?, scanned_at = ? WHERE disc_no = ?`,
+      [pack.folder_count, pack.file_count, pack.total_kb, pack.pack_hash, pack.parts.length, packBytes, pack.pack_version, now, discNo],
+    );
+    importPackParts(db, discNo, pack.pack_hash, parsedParts);
+    for (const part of pack.parts) {
+      db.run(
+        `INSERT INTO pending_pack_part (disc_no, pack_hash, part, part_hash, bytes, data, uploaded)
+         VALUES (?, ?, ?, ?, ?, ?, 0)
+         ON CONFLICT (disc_no, pack_hash, part) DO NOTHING`,
+        [discNo, pack.pack_hash, part.part, part.hash, part.bytes, part.data],
+      );
+    }
+    enqueue(db, {
+      kind: "pack",
+      table: "disc",
+      rowId: String(discNo),
+      op: "pack_commit",
+      payload: {
+        pack_hash: pack.pack_hash,
+        pack_parts: pack.parts.length,
+        pack_bytes: packBytes,
+        pack_version: pack.pack_version,
+        folder_count: pack.folder_count,
+        file_count: pack.file_count,
+        total_kb: pack.total_kb,
+        scanned_at: now,
+      },
+      baseVersion: 0,
+    });
+  });
+
+  return { folder_count: pack.folder_count, file_count: pack.file_count, total_kb: pack.total_kb };
 }

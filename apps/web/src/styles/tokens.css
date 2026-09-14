@@ -1,0 +1,148 @@
+/* Design tokens ported from the Claude Design canvas (design/DiscVault.dc.html). */
+
+:root {
+  --dv-canvas: #f1f1f3;
+  --dv-bg: #ffffff;
+  --dv-bg-sub: #fafafa;
+  --dv-panel: #f7f7f8;
+  --dv-border: #e4e4e7;
+  --dv-border-2: #d4d4d8;
+  --dv-text: #18181b;
+  --dv-text-2: #52525b;
+  --dv-text-3: #8a8a93;
+  --dv-accent: #5a5fe0;
+  --dv-accent-soft: #ecedfb;
+  --dv-accent-line: #c9cbf6;
+  --dv-hl-bg: #fdeaa7;
+  --dv-hl-text: #4a3a00;
+  --dv-ok: #15803d;
+  --dv-ok-soft: #e6f5ec;
+  --dv-info: #1d4ed8;
+  --dv-info-soft: #e8eefe;
+  --dv-warn: #b45309;
+  --dv-warn-soft: #fbf0de;
+  --dv-err: #b91c1c;
+  --dv-err-soft: #fceceb;
+  --dv-off: #71717a;
+  --dv-off-soft: #efeff1;
+  --dv-cat-video: #7c3aed;
+  --dv-cat-audio: #0d9488;
+  --dv-cat-image: #c2410c;
+  --dv-cat-document: #2563eb;
+  --dv-cat-archive: #a16207;
+  --dv-cat-software: #be185d;
+  --dv-cat-other: #71717a;
+  --dv-hover: #f4f4f5;
+  --dv-sel: #eef0fd;
+  --dv-row: 34px;
+  --dv-shadow: 0 1px 2px rgba(24, 24, 27, 0.06), 0 8px 24px -12px rgba(24, 24, 27, 0.18);
+}
+
+[data-dv-theme="dark"] {
+  --dv-canvas: #08080a;
+  --dv-bg: #111113;
+  --dv-bg-sub: #17171a;
+  --dv-panel: #0d0d0f;
+  --dv-border: #26262b;
+  --dv-border-2: #37373f;
+  --dv-text: #f4f4f5;
+  --dv-text-2: #a1a1aa;
+  --dv-text-3: #6e6e78;
+  --dv-accent: #8c90f7;
+  --dv-accent-soft: #1c1c36;
+  --dv-accent-line: #35356a;
+  --dv-hl-bg: #4d3d0c;
+  --dv-hl-text: #ffe9a3;
+  --dv-ok: #4ade80;
+  --dv-ok-soft: #12291b;
+  --dv-info: #7ea6ff;
+  --dv-info-soft: #131f3a;
+  --dv-warn: #fbbf24;
+  --dv-warn-soft: #2e2208;
+  --dv-err: #f87171;
+  --dv-err-soft: #2e1414;
+  --dv-off: #8a8a95;
+  --dv-off-soft: #1c1c1f;
+  --dv-cat-video: #a78bfa;
+  --dv-cat-audio: #2dd4bf;
+  --dv-cat-image: #fb923c;
+  --dv-cat-document: #7ea6ff;
+  --dv-cat-archive: #d3b04f;
+  --dv-cat-software: #f472b6;
+  --dv-cat-other: #8a8a95;
+  --dv-hover: #1a1a1e;
+  --dv-sel: #1b1b33;
+  --dv-shadow: 0 1px 2px rgba(0, 0, 0, 0.5), 0 12px 32px -14px rgba(0, 0, 0, 0.8);
+}
+
+@font-face {
+  font-family: "Instrument Sans";
+  src: local("Instrument Sans");
+}
+
+html,
+body {
+  margin: 0;
+  background: var(--dv-canvas);
+  color: var(--dv-text);
+  font-family: "Instrument Sans", system-ui, -apple-system, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  font-feature-settings: "tnum" 1;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+a {
+  color: var(--dv-accent);
+  text-decoration: none;
+}
+a:hover {
+  color: var(--dv-text);
+  text-decoration: underline;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: var(--dv-text-3);
+}
+
+:focus-visible {
+  outline: 2px solid var(--dv-accent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+#root {
+  min-height: 100vh;
+}
+
+@keyframes dvspin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@keyframes dvpulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+.dv-mono {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+}

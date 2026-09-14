@@ -9,7 +9,7 @@ export interface AccountResponse {
   operator: boolean;
 }
 
-async function apiRequest<T>(method: string, path: string, body?: unknown): Promise<T> {
+export async function apiRequest<T>(method: string, path: string, body?: unknown): Promise<T> {
   const response = await fetch(`${API_PREFIX}${path}`, {
     method,
     credentials: "same-origin",

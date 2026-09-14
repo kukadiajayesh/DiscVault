@@ -40,6 +40,42 @@ export function searchFiles(db: SqlDb, query: string, options: { limit?: number;
   ]);
 }
 
+export interface FolderHit {
+  folder_id: number;
+  disc_no: number;
+  name: string;
+  rel_path: string;
+  size_kb: number | null;
+  created: string | null;
+  title: string | null;
+  location_slot: string | null;
+  location: string | null;
+}
+
+/** Substring search over folder names, mirroring {@link searchFiles} (Search screen's Folders/Both scope). */
+export function searchFolders(db: SqlDb, query: string, options: { limit?: number; offset?: number } = {}): FolderHit[] {
+  const q = query.trim();
+  if (!q) return [];
+  const limit = Math.min(options.limit ?? 200, 1000);
+  const offset = options.offset ?? 0;
+  const select = `SELECT fo.folder_id, fo.disc_no, fo.name, fo.rel_path, fo.size_kb, fo.created,
+      d.title, d.location_slot, l.name AS location`;
+  const joins = `JOIN disc d ON d.disc_no = fo.disc_no AND d.deleted_at IS NULL
+      LEFT JOIN location l ON l.id = d.location_id AND l.deleted_at IS NULL`;
+  if (q.length >= 3) {
+    return db.all<FolderHit>(
+      `${select} FROM folder_fts s JOIN folder fo ON fo.folder_id = s.rowid ${joins}
+       WHERE folder_fts MATCH ? ORDER BY rank LIMIT ? OFFSET ?`,
+      [`"${q.replace(/"/g, '""')}"`, limit, offset],
+    );
+  }
+  return db.all<FolderHit>(`${select} FROM folder fo ${joins} WHERE fo.name LIKE ? ESCAPE '\\' ORDER BY fo.name LIMIT ? OFFSET ?`, [
+    `%${q.replace(/[\\%_]/g, (c) => `\\${c}`)}%`,
+    limit,
+    offset,
+  ]);
+}
+
 export interface CatalogStats {
   discs: number;
   folders: number;

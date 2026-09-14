@@ -1,4 +1,5 @@
 import type { SqlDb, SqlValue } from "@discvault/schema";
+import type { PackFile, PackFolder } from "@discvault/sync-protocol";
 import { uuidv7 } from "@discvault/sync-protocol";
 import sqlite3InitModule, { type OpfsSAHPoolDatabase, type SAHPoolUtil } from "@sqlite.org/sqlite-wasm";
 import { expose } from "comlink";
@@ -13,8 +14,33 @@ import {
 } from "../archive/import.js";
 import { SyncEngine, type SyncReport } from "../sync/engine.js";
 import { httpTransport } from "../sync/transport.js";
+import {
+  allExtensionCounts,
+  type CategoryCount,
+  categoryBreakdown,
+  type DiscDetail,
+  type DiscListItem,
+  type ExtCount,
+  type ExtensionCount,
+  extensionBreakdown,
+  extensionCategoryMap,
+  type FileEntry,
+  type FolderChild,
+  findFolderByPath,
+  getDisc,
+  largestFiles,
+  listDiscs,
+  listFolderChildren,
+  type MediaTypeCount,
+  mediaTypeBreakdown,
+  missingDiscNumbers,
+} from "./catalog.js";
 import { getState, prepareLocalDb, setState } from "./local-db.js";
-import { type CatalogStats, catalogStats, type FileHit, searchFiles } from "./search.js";
+import { type CommittedPack, commitScannedPack, removeDiscCatalog, type ScannedDiscMeta } from "./packs.js";
+import { deleteRow, type OutboxRow, writeRow } from "./rows.js";
+import { type CatalogStats, catalogStats, type FileHit, type FolderHit, searchFiles, searchFolders } from "./search.js";
+import { type RecentSearch, recentSearches, recordSearch } from "./search-history.js";
+import { type ConflictRow, discardOutboxEntry, dismissConflict, keepTheirs, listConflicts, listOutbox } from "./sync-admin.js";
 
 /**
  * Runs inside a dedicated Worker (SQLite WASM cannot use OPFS synchronous access handles on the
@@ -95,7 +121,7 @@ async function acquireExclusiveLock(name: string): Promise<ReleaseFn | null> {
   });
 }
 
-interface StorageStatus {
+export interface StorageStatus {
   persisted: boolean;
   usage: number;
   quota: number;
@@ -162,8 +188,96 @@ const api = {
     return searchFiles(requireDb(), query, options);
   },
 
+  async searchFolders(query: string, options: { limit?: number; offset?: number } = {}): Promise<FolderHit[]> {
+    return searchFolders(requireDb(), query, options);
+  },
+
   async stats(): Promise<CatalogStats> {
     return catalogStats(requireDb());
+  },
+
+  /** Persistence + quota (§8: Sync & storage, and the shell's footer). */
+  async storageEstimate(): Promise<StorageStatus> {
+    requireDb();
+    return ensurePersistence();
+  },
+
+  async listDiscs(): Promise<DiscListItem[]> {
+    return listDiscs(requireDb());
+  },
+
+  async missingDiscNumbers(): Promise<number[]> {
+    return missingDiscNumbers(requireDb());
+  },
+
+  /** Disc library "Mark retired / lost" on a never-scanned disc number (§8: Disc library). */
+  async setDiscStatus(discNo: number, status: string): Promise<void> {
+    writeRow(requireDb(), "disc", String(discNo), { status });
+  },
+
+  async setDiscNotes(discNo: number, notes: string): Promise<void> {
+    writeRow(requireDb(), "disc", String(discNo), { notes });
+  },
+
+  /** Scan wizard "Save" (§8 screen 7, step 5): commits a live folder scan as a new disc pack. */
+  async commitScannedPack(discNo: number, meta: ScannedDiscMeta, folders: PackFolder[], files: PackFile[]): Promise<CommittedPack> {
+    return commitScannedPack(requireDb(), discNo, meta, folders, files);
+  },
+
+  /** Disc explorer "Delete" (§8 overlay E): removes the disc row and its local catalog. */
+  async deleteDisc(discNo: number): Promise<void> {
+    const db = requireDb();
+    db.transaction(() => {
+      removeDiscCatalog(db, discNo);
+      deleteRow(db, "disc", String(discNo));
+    });
+  },
+
+  async getDisc(discNo: number): Promise<DiscDetail | undefined> {
+    return getDisc(requireDb(), discNo);
+  },
+
+  /** `relPath` is the folder's path from the disc root ('' for the root itself). */
+  async listFolder(discNo: number, relPath: string): Promise<FolderChild[]> {
+    const db = requireDb();
+    return listFolderChildren(db, discNo, findFolderByPath(db, discNo, relPath));
+  },
+
+  async categoryBreakdown(discNo?: number): Promise<CategoryCount[]> {
+    return categoryBreakdown(requireDb(), discNo);
+  },
+
+  async extensionBreakdown(discNo: number): Promise<ExtensionCount[]> {
+    return extensionBreakdown(requireDb(), discNo);
+  },
+
+  async largestFiles(discNo: number): Promise<FileEntry[]> {
+    return largestFiles(requireDb(), discNo);
+  },
+
+  async mediaTypeBreakdown(): Promise<MediaTypeCount[]> {
+    return mediaTypeBreakdown(requireDb());
+  },
+
+  async extensionCategoryMap(): Promise<Record<string, string>> {
+    return extensionCategoryMap(requireDb());
+  },
+
+  async allExtensionCounts(): Promise<ExtCount[]> {
+    return allExtensionCounts(requireDb());
+  },
+
+  /** Settings → Categories: user override for one extension's category. */
+  async setCategoryOverride(ext: string, category: string): Promise<void> {
+    writeRow(requireDb(), "category_override", ext, { category });
+  },
+
+  async recordSearch(query: string, resultCount: number): Promise<void> {
+    recordSearch(requireDb(), query, resultCount);
+  },
+
+  async recentSearches(limit?: number): Promise<RecentSearch[]> {
+    return recentSearches(requireDb(), limit);
   },
 
   async previewArchive(zipBytes: Uint8Array): Promise<ArchivePreview> {
@@ -181,6 +295,26 @@ const api = {
 
   async sync(): Promise<SyncReport> {
     return new SyncEngine(requireDb(), httpTransport()).sync();
+  },
+
+  async listOutbox(): Promise<OutboxRow[]> {
+    return listOutbox(requireDb());
+  },
+
+  async discardOutboxEntry(id: string): Promise<void> {
+    discardOutboxEntry(requireDb(), id);
+  },
+
+  async listConflicts(): Promise<ConflictRow[]> {
+    return listConflicts(requireDb());
+  },
+
+  async keepTheirs(conflictId: string): Promise<void> {
+    keepTheirs(requireDb(), conflictId);
+  },
+
+  async dismissConflict(conflictId: string): Promise<void> {
+    dismissConflict(requireDb(), conflictId);
   },
 
   /** Stable per-device id, stored in the vault's own DB so it survives across sign-ins here. */

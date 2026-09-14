@@ -1,96 +1,124 @@
 import { createRootRoute, createRoute, createRouter, Outlet } from "@tanstack/react-router";
+import { RequireAuth } from "./app/require-auth.js";
+import { AppShell } from "./app/shell.js";
+import Dashboard from "./screens/Dashboard.js";
+import DiscExplorer from "./screens/DiscExplorer.js";
+import Discs from "./screens/Discs.js";
+import Login from "./screens/Login.js";
+import Scan from "./screens/Scan.js";
+import Search from "./screens/Search.js";
+import Settings from "./screens/Settings.js";
+import Setup from "./screens/Setup.js";
+import Stub from "./screens/Stub.js";
+import Sync from "./screens/Sync.js";
 
-/**
- * Code-based routes for the 14 screens (§8). Placeholders only — real screens come from the
- * Claude Design work. This file exists so navigation, deep links and the app shell can be built
- * and tested before any screen has content.
- */
-function Placeholder({ title }: { title: string }) {
-  return (
-    <div style={{ padding: 24 }}>
-      <h1>{title}</h1>
-      <p>Not built yet.</p>
-    </div>
-  );
-}
+/** Code-based routes for the 14 screens (§8) plus the disc-explorer browse splat and settings splat. */
 
 const rootRoute = createRootRoute({
   component: () => <Outlet />,
 });
 
-const loginRoute = createRoute({ getParentRoute: () => rootRoute, path: "/login", component: () => <Placeholder title="Sign in" /> });
+// Full-bleed, no app shell: reached before a vault is open.
+const loginRoute = createRoute({ getParentRoute: () => rootRoute, path: "/login", component: Login });
 const setupRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/setup",
-  component: () => <Placeholder title="First-time setup" />,
+  component: () => (
+    <RequireAuth>
+      <Setup />
+    </RequireAuth>
+  ),
 });
-const dashboardRoute = createRoute({ getParentRoute: () => rootRoute, path: "/", component: () => <Placeholder title="Dashboard" /> });
-const searchRoute = createRoute({ getParentRoute: () => rootRoute, path: "/search", component: () => <Placeholder title="Search" /> });
-const discsRoute = createRoute({ getParentRoute: () => rootRoute, path: "/discs", component: () => <Placeholder title="Disc library" /> });
-const discRoute = createRoute({
+
+// Every other screen shares the app shell (top bar / left nav / bottom tabs) and requires a session.
+const appLayoutRoute = createRoute({
   getParentRoute: () => rootRoute,
-  path: "/discs/$no",
-  component: () => <Placeholder title="Disc explorer" />,
+  id: "app-layout",
+  component: () => (
+    <RequireAuth>
+      <AppShell>
+        <Outlet />
+      </AppShell>
+    </RequireAuth>
+  ),
 });
-const discBrowseRoute = createRoute({
-  getParentRoute: () => discRoute,
-  path: "/browse/$",
-  component: () => <Placeholder title="Disc explorer" />,
+
+const dashboardRoute = createRoute({ getParentRoute: () => appLayoutRoute, path: "/", component: Dashboard });
+
+const searchRoute = createRoute({
+  getParentRoute: () => appLayoutRoute,
+  path: "/search",
+  validateSearch: (search: Record<string, unknown>): { q?: string } => (typeof search.q === "string" && search.q ? { q: search.q } : {}),
+  component: Search,
 });
+
+const discsRoute = createRoute({ getParentRoute: () => appLayoutRoute, path: "/discs", component: Discs });
+const discRoute = createRoute({ getParentRoute: () => appLayoutRoute, path: "/discs/$no", component: DiscExplorer });
+const discBrowseRoute = createRoute({ getParentRoute: () => discRoute, path: "/browse/$", component: DiscExplorer });
+
 const scanRoute = createRoute({
-  getParentRoute: () => rootRoute,
+  getParentRoute: () => appLayoutRoute,
   path: "/scan",
-  component: () => <Placeholder title="Add / re-scan disc" />,
+  validateSearch: (search: Record<string, unknown>): { disc?: number } => {
+    const disc = typeof search.disc === "number" ? search.disc : typeof search.disc === "string" ? Number(search.disc) : undefined;
+    return disc === undefined || Number.isNaN(disc) ? {} : { disc };
+  },
+  component: Scan,
 });
-const syncRoute = createRoute({ getParentRoute: () => rootRoute, path: "/sync", component: () => <Placeholder title="Sync & storage" /> });
-const settingsRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: "/settings/$",
-  component: () => <Placeholder title="Settings" />,
-});
+
+const syncRoute = createRoute({ getParentRoute: () => appLayoutRoute, path: "/sync", component: Sync });
+const settingsRoute = createRoute({ getParentRoute: () => appLayoutRoute, path: "/settings/$", component: Settings });
+
+// Phase 4 (§8, items 10-14): position in the information architecture is set; content is a stub.
 const duplicatesRoute = createRoute({
-  getParentRoute: () => rootRoute,
+  getParentRoute: () => appLayoutRoute,
   path: "/duplicates",
-  component: () => <Placeholder title="Duplicate finder" />,
+  component: () => <Stub title="Duplicate finder" />,
 });
 const statsRoute = createRoute({
-  getParentRoute: () => rootRoute,
+  getParentRoute: () => appLayoutRoute,
   path: "/stats",
-  component: () => <Placeholder title="Statistics & reports" />,
+  component: () => <Stub title="Statistics & reports" />,
 });
 const collectionsRoute = createRoute({
-  getParentRoute: () => rootRoute,
+  getParentRoute: () => appLayoutRoute,
   path: "/collections",
-  component: () => <Placeholder title="Collections" />,
+  component: () => <Stub title="Collections" />,
 });
 const collectionRoute = createRoute({
-  getParentRoute: () => rootRoute,
+  getParentRoute: () => appLayoutRoute,
   path: "/collections/$id",
-  component: () => <Placeholder title="Collection" />,
+  component: () => <Stub title="Collection" />,
 });
 const locationsRoute = createRoute({
-  getParentRoute: () => rootRoute,
+  getParentRoute: () => appLayoutRoute,
   path: "/locations",
-  component: () => <Placeholder title="Locations & loans" />,
+  component: () => <Stub title="Locations & loans" />,
 });
-const healthRoute = createRoute({ getParentRoute: () => rootRoute, path: "/health", component: () => <Placeholder title="Data health" /> });
+const healthRoute = createRoute({
+  getParentRoute: () => appLayoutRoute,
+  path: "/health",
+  component: () => <Stub title="Data health" />,
+});
 
 const routeTree = rootRoute.addChildren([
   loginRoute,
   setupRoute,
-  dashboardRoute,
-  searchRoute,
-  discsRoute,
-  discRoute.addChildren([discBrowseRoute]),
-  scanRoute,
-  syncRoute,
-  settingsRoute,
-  duplicatesRoute,
-  statsRoute,
-  collectionsRoute,
-  collectionRoute,
-  locationsRoute,
-  healthRoute,
+  appLayoutRoute.addChildren([
+    dashboardRoute,
+    searchRoute,
+    discsRoute,
+    discRoute.addChildren([discBrowseRoute]),
+    scanRoute,
+    syncRoute,
+    settingsRoute,
+    duplicatesRoute,
+    statsRoute,
+    collectionsRoute,
+    collectionRoute,
+    locationsRoute,
+    healthRoute,
+  ]),
 ]);
 
 export const router = createRouter({ routeTree });
