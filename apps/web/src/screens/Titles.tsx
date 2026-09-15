@@ -176,6 +176,15 @@ function TitlesGroupPage({
 }) {
   const navigate = useNavigate();
   const [drawerItem, setDrawerItem] = useState<DiscItemWithSource | null>(null);
+  const [viewMode, setViewMode] = useState<"list" | "grid">(
+    () => (localStorage.getItem("discvault:titles-view-mode") as "list" | "grid") || "grid",
+  );
+
+  const changeViewMode = (mode: "list" | "grid") => {
+    setViewMode(mode);
+    localStorage.setItem("discvault:titles-view-mode", mode);
+  };
+
   const items = itemsQuery.data ?? [];
   const groups = groupItemsBy(items, groupKey);
 
@@ -202,7 +211,56 @@ function TitlesGroupPage({
         >
           ← Titles
         </button>
-        <span style={{ font: "700 19px/1.2 'Instrument Sans', system-ui, sans-serif" }}>{heading}</span>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <span style={{ font: "700 19px/1.2 'Instrument Sans', system-ui, sans-serif" }}>{heading}</span>
+          <div
+            style={{
+              display: "flex",
+              gap: 4,
+              background: "var(--dv-bg-sub)",
+              padding: 3,
+              borderRadius: 8,
+              border: "1px solid var(--dv-border)",
+            }}
+          >
+            <button
+              type="button"
+              onClick={() => changeViewMode("list")}
+              style={{
+                border: 0,
+                background: viewMode === "list" ? "var(--dv-bg)" : "transparent",
+                color: viewMode === "list" ? "var(--dv-text)" : "var(--dv-text-3)",
+                padding: "4px 10px",
+                borderRadius: 6,
+                fontSize: 11,
+                fontWeight: 600,
+                cursor: "pointer",
+                fontFamily: "'Instrument Sans', system-ui, sans-serif",
+                transition: "all 0.1s ease",
+              }}
+            >
+              List
+            </button>
+            <button
+              type="button"
+              onClick={() => changeViewMode("grid")}
+              style={{
+                border: 0,
+                background: viewMode === "grid" ? "var(--dv-bg)" : "transparent",
+                color: viewMode === "grid" ? "var(--dv-text)" : "var(--dv-text-3)",
+                padding: "4px 10px",
+                borderRadius: 6,
+                fontSize: 11,
+                fontWeight: 600,
+                cursor: "pointer",
+                fontFamily: "'Instrument Sans', system-ui, sans-serif",
+                transition: "all 0.1s ease",
+              }}
+            >
+              Grid
+            </button>
+          </div>
+        </div>
       </div>
       <div style={{ flex: 1, minHeight: 0, overflow: "auto", padding: "12px 24px 24px" }}>
         {items.length === 0 && !itemsQuery.isLoading && (
@@ -223,27 +281,40 @@ function TitlesGroupPage({
                 {groupLabel(key)}
               </div>
             )}
-            {groupItems.map((item) => (
-              <button type="button" key={item.id} onClick={() => setDrawerItem(item)} style={itemRowStyle}>
-                <ItemPreviewImage itemId={item.id} imageUrl={item.imageUrl} style={itemThumbnailStyle} />
-                <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 2 }}>
-                  <span
-                    style={{
-                      font: "600 13px/1.3 'Instrument Sans', system-ui, sans-serif",
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                      whiteSpace: "nowrap",
-                    }}
-                  >
-                    {item.title ?? item.label}
-                  </span>
-                  <span className="dv-mono" style={{ fontSize: 11, color: "var(--dv-text-3)" }}>
-                    {[item.platform, item.year].filter(Boolean).join(" · ")}
-                  </span>
-                </div>
-                <span style={discBadgeStyle}>#{item.discNo}</span>
-              </button>
-            ))}
+            <div style={viewMode === "grid" ? gridContainerStyle : listContainerStyle}>
+              {groupItems.map((item) => (
+                <button
+                  type="button"
+                  key={item.id}
+                  onClick={() => setDrawerItem(item)}
+                  style={viewMode === "grid" ? itemGridStyle : itemRowStyle}
+                >
+                  <ItemPreviewImage
+                    itemId={item.id}
+                    imageUrl={item.imageUrl}
+                    style={viewMode === "grid" ? itemGridThumbnailStyle : itemThumbnailStyle}
+                    contentType={item.contentType}
+                  />
+                  <div style={viewMode === "grid" ? itemGridContentStyle : itemRowContentStyle}>
+                    <span
+                      style={{
+                        font: "600 13px/1.3 'Instrument Sans', system-ui, sans-serif",
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      {item.title ?? item.label}
+                    </span>
+                    <span className="dv-mono" style={{ fontSize: 11, color: "var(--dv-text-3)" }}>
+                      {[item.platform, item.year].filter(Boolean).join(" · ")}
+                    </span>
+                  </div>
+                  {viewMode === "list" && <span style={discBadgeStyle}>#{item.discNo}</span>}
+                  {viewMode === "grid" && <span style={gridDiscBadgeStyle}>#{item.discNo}</span>}
+                </button>
+              ))}
+            </div>
           </div>
         ))}
       </div>
@@ -265,7 +336,12 @@ function TitlesGroupPage({
             ✕
           </button>
           <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-            <ItemPreviewImage itemId={drawerItem.id} imageUrl={drawerItem.imageUrl} style={drawerImageStyle} />
+            <ItemPreviewImage
+              itemId={drawerItem.id}
+              imageUrl={drawerItem.imageUrl}
+              style={drawerImageStyle}
+              contentType={drawerItem.contentType}
+            />
             <span
               style={{
                 padding: "1px 8px",
@@ -343,12 +419,73 @@ function TitlesGroupPage({
   );
 }
 
+const gridContainerStyle = {
+  display: "grid",
+  gridTemplateColumns: "repeat(auto-fill, minmax(135px, 1fr))",
+  gap: 16,
+  padding: "12px 4px",
+} as const;
+
+const listContainerStyle = {
+  display: "flex",
+  flexDirection: "column" as const,
+} as const;
+
+const itemGridStyle = {
+  display: "flex",
+  flexDirection: "column" as const,
+  gap: 8,
+  padding: "10px 10px 14px",
+  borderRadius: 12,
+  border: "1px solid var(--dv-border)",
+  background: "var(--dv-bg-sub)",
+  textAlign: "left" as const,
+  cursor: "pointer",
+  position: "relative" as const,
+  minWidth: 0,
+} as const;
+
+const itemGridThumbnailStyle = {
+  width: "100%",
+  aspectRatio: "2 / 3",
+  borderRadius: 8,
+  objectFit: "cover" as const,
+  background: "var(--dv-bg)",
+} as const;
+
+const itemGridContentStyle = {
+  display: "flex",
+  flexDirection: "column" as const,
+  gap: 4,
+  minWidth: 0,
+} as const;
+
+const gridDiscBadgeStyle = {
+  position: "absolute" as const,
+  top: 16,
+  right: 16,
+  padding: "2px 6px",
+  borderRadius: 4,
+  background: "rgba(0, 0, 0, 0.7)",
+  backdropFilter: "blur(4px)",
+  color: "var(--dv-accent)",
+  font: "700 10px/1.3 'JetBrains Mono', monospace",
+} as const;
+
+const itemRowContentStyle = {
+  flex: 1,
+  minWidth: 0,
+  display: "flex",
+  flexDirection: "column" as const,
+  gap: 4,
+} as const;
+
 const itemRowStyle = {
   display: "flex",
   width: "100%",
   alignItems: "center",
-  gap: 12,
-  minHeight: 52,
+  gap: 16,
+  minHeight: 80,
   padding: "8px 4px",
   border: 0,
   borderBottom: "1px solid var(--dv-border)",
@@ -358,10 +495,10 @@ const itemRowStyle = {
 } as const;
 
 const itemThumbnailStyle = {
-  width: 40,
-  height: 40,
+  width: 64,
+  height: 64,
   flex: "none",
-  borderRadius: 6,
+  borderRadius: 8,
   objectFit: "cover",
   background: "var(--dv-bg-sub)",
 } as const;

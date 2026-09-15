@@ -17,7 +17,7 @@ import {
 } from "../ai/gemini-key.js";
 import { type Preferences, usePreferences } from "../app/preferences.js";
 import { useSession } from "../app/session.js";
-import { useTheme } from "../app/theme.js";
+import { type ThemePreference, useTheme } from "../app/theme.js";
 import type { ArchivePreview } from "../archive/import.js";
 import { vaultWorker } from "../db/rpc.js";
 import {
@@ -246,7 +246,7 @@ const selectStyle = {
 const checkStyle = { width: 15, height: 15, accentColor: "var(--dv-accent)" } as const;
 
 function PreferencesTab() {
-  const { theme, setTheme } = useTheme();
+  const { preference, setPreference } = useTheme();
   const { prefs, setPref } = usePreferences();
 
   return (
@@ -254,7 +254,8 @@ function PreferencesTab() {
       <SectionTitle>Preferences</SectionTitle>
       <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
         <Row label="Theme">
-          <select value={theme} onChange={(e) => setTheme(e.target.value as "light" | "dark")} style={selectStyle}>
+          <select value={preference} onChange={(e) => setPreference(e.target.value as ThemePreference)} style={selectStyle}>
+            <option value="system">System</option>
             <option value="light">Light</option>
             <option value="dark">Dark</option>
           </select>
