@@ -29,7 +29,7 @@ export interface SyncedTableDef {
   columns: Record<string, ColumnDef>;
 }
 
-export const SYNCED_TABLE_NAMES = ["disc", "tag", "tag_link", "item_note", "saved_search", "category_override"] as const;
+export const SYNCED_TABLE_NAMES = ["disc", "disc_item", "tag", "tag_link", "item_note", "saved_search", "category_override"] as const;
 
 export type SyncedTableName = (typeof SYNCED_TABLE_NAMES)[number];
 
@@ -58,6 +58,32 @@ export const SYNCED_TABLES: Record<SyncedTableName, SyncedTableDef> = {
       pack_version: { type: "integer", required: true, default: 1, serverOnly: true },
       prev_pack_hash: { type: "text", serverOnly: true },
       scanned_at: { type: "text", serverOnly: true },
+    },
+  },
+  /** One AI-identified game/movie/software found within a disc, anchored to a top-level folder. */
+  disc_item: {
+    name: "disc_item",
+    primaryKey: "id",
+    primaryKeyType: "text",
+    primaryKeyKind: "uuid",
+    columns: {
+      disc_no: { type: "integer", required: true, references: "disc" },
+      path: { type: "text", required: true },
+      content_type: { type: "text", required: true },
+      title: { type: "text" },
+      platform: { type: "text" },
+      publisher: { type: "text" },
+      developer: { type: "text" },
+      year: { type: "text" },
+      genres: { type: "json" },
+      description: { type: "text" },
+      label: { type: "text" },
+      summary: { type: "text" },
+      confidence: { type: "text", required: true },
+      model: { type: "text", required: true },
+      analyzed_at: { type: "text", required: true },
+      /** Resolved preview-image URL from an external provider (§ image preview), null until looked up or if no match was found. */
+      image_url: { type: "text" },
     },
   },
   tag: {
@@ -146,4 +172,6 @@ export const SYNCED_TABLE_INDEXES = [
   ...SYNCED_TABLE_NAMES.map((t) => `CREATE INDEX IF NOT EXISTS ${t}_version_idx ON ${t} (version)`),
   "CREATE INDEX IF NOT EXISTS tag_link_item_idx ON tag_link (item_key)",
   "CREATE INDEX IF NOT EXISTS tag_link_tag_idx ON tag_link (tag_id)",
+  "CREATE INDEX IF NOT EXISTS disc_item_disc_idx ON disc_item (disc_no)",
+  "CREATE INDEX IF NOT EXISTS disc_item_content_type_idx ON disc_item (content_type)",
 ];

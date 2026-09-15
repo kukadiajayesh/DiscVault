@@ -69,9 +69,33 @@ export const VAULT_MIGRATIONS: Migration[] = [
     ],
     run: (db) => dropColumnsIfPresent(db, "disc", ["location_id", "location_slot"]),
   },
+  {
+    // `disc_item` (§ AI: disc identification) was added to SYNCED_TABLES after v1 shipped, so a
+    // vault that already migrated past v1 never ran the statement that creates it. Re-running the
+    // synced-table DDL/indexes is a no-op for tables that already exist (CREATE TABLE/INDEX IF NOT
+    // EXISTS) and creates only what's missing — the general fix for any future addition to
+    // SYNCED_TABLES, not just this one.
+    version: 3,
+    name: "sync_new_synced_tables",
+    statements: [...Object.values(SYNCED_TABLES).map(syncedTableDDL), ...SYNCED_TABLE_INDEXES],
+  },
+  {
+    // `disc_item.image_url` (§ image preview) was added to SYNCED_TABLES after v1/v3 shipped, so an
+    // existing `disc_item` table doesn't have it — re-running syncedTableDDL is a no-op for a table
+    // that already exists, so (unlike v3) this needs an actual ALTER TABLE, done conditionally in
+    // case a device is migrating straight from a fresh v1 install that already has the column.
+    version: 4,
+    name: "disc_item_image_url",
+    run: (db) => addColumnIfMissing(db, "disc_item", "image_url", "TEXT"),
+  },
 ];
 
 function dropColumnsIfPresent(db: SqlDb, table: string, columns: string[]): void {
   const existing = new Set(db.all<{ name: string }>(`PRAGMA table_info(${table})`).map((c) => c.name));
   for (const column of columns) if (existing.has(column)) db.exec(`ALTER TABLE ${table} DROP COLUMN ${column}`);
+}
+
+function addColumnIfMissing(db: SqlDb, table: string, column: string, sqlType: string): void {
+  const existing = new Set(db.all<{ name: string }>(`PRAGMA table_info(${table})`).map((c) => c.name));
+  if (!existing.has(column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${sqlType}`);
 }

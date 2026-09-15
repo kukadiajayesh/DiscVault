@@ -1,34 +1,22 @@
-export interface DiscClassification {
+export type DiscContentType = "game" | "movie" | "software" | "music" | "mixed" | "other";
+
+/** One AI-identified item on a disc, not yet saved — Gemini's raw answer for one array entry. */
+export interface DiscItemDraft {
+  /** Top-level folder this item is anchored to, or "" for the whole disc. */
+  path: string;
+  contentType: DiscContentType;
+  /** Specific identified title (e.g. "Half-Life 2"), or null when no single item was confident. */
+  title: string | null;
+  platform: string | null;
+  publisher: string | null;
+  developer: string | null;
+  year: string | null;
+  genres: string[];
+  description: string;
+  /** Fallback short label/summary, used when `title` is null (mixed/other items). */
   label: string;
   summary: string;
   confidence: "low" | "medium" | "high";
-}
-
-export interface StoredClassification extends DiscClassification {
   model: string;
   analyzedAt: string;
-}
-
-/** Reads the AI classification out of a disc's `meta` JSON column (`disc.meta`), if present. */
-export function readDiscClassification(metaJson: string | null): StoredClassification | null {
-  if (!metaJson) return null;
-  try {
-    const meta = JSON.parse(metaJson) as { ai?: StoredClassification };
-    return meta.ai ?? null;
-  } catch {
-    return null;
-  }
-}
-
-/** Merges a fresh classification into a disc's existing `meta` JSON, ready for `writeRow`. */
-export function mergeDiscClassification(metaJson: string | null, stored: StoredClassification): Record<string, unknown> {
-  let meta: Record<string, unknown> = {};
-  if (metaJson) {
-    try {
-      meta = JSON.parse(metaJson) as Record<string, unknown>;
-    } catch {
-      meta = {};
-    }
-  }
-  return { ...meta, ai: stored };
 }

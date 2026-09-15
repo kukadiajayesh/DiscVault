@@ -3,7 +3,7 @@ import type { PackFile, PackFolder } from "@discvault/sync-protocol";
 import { uuidv7 } from "@discvault/sync-protocol";
 import sqlite3InitModule, { type OpfsSAHPoolDatabase, type SAHPoolUtil } from "@sqlite.org/sqlite-wasm";
 import { expose } from "comlink";
-import { mergeDiscClassification, type StoredClassification } from "../ai/classification.js";
+import type { DiscItemDraft } from "../ai/classification.js";
 import { type ExportResult, exportArchive } from "../archive/export.js";
 import { type ArchiveDiscPreview, type CollisionResolution, type ImportResult, importArchive, previewArchive } from "../archive/import.js";
 import { SyncEngine, type SyncReport } from "../sync/engine.js";
@@ -22,6 +22,19 @@ import {
   mediaTypeBreakdown,
   missingDiscNumbers,
 } from "./catalog.js";
+import {
+  discNosWithItems,
+  getDiscItemImageBlob,
+  itemGenreCounts,
+  itemsByContentType,
+  itemsByGenre,
+  itemTypeCounts,
+  listDiscItems,
+  removeDiscItem,
+  replaceDiscItems,
+  saveDiscItemImageBlob,
+  setDiscItemImageUrl,
+} from "./disc-items.js";
 import { LeaderChannel } from "./leader-channel.js";
 import { getState, prepareLocalDb, setState } from "./local-db.js";
 import { commitScannedPack, removeDiscCatalog, type ScannedDiscMeta } from "./packs.js";
@@ -351,15 +364,34 @@ const api = {
     writeRow(requireDb(), "disc", String(discNo), { notes });
   }),
 
+  /** Auto-title from AI analysis (§ AI: disc identification) — only ever called when the disc has no title yet. */
+  setDiscTitle: remote("setDiscTitle", (discNo: number, title: string) => {
+    writeRow(requireDb(), "disc", String(discNo), { title });
+  }),
+
+  /**
+   * Caches the exact text of the most recent Gemini analysis on the disc row, before any of it is
+   * turned into `disc_item` rows — an audit trail/fallback that survives even if the structured
+   * insert below fails or the parsing logic changes later.
+   */
+  saveDiscAiRaw: remote("saveDiscAiRaw", (discNo: number, entry: { model: string; analyzedAt: string; response: string }) => {
+    const db = requireDb();
+    const disc = getDisc(db, discNo);
+    const meta = disc?.meta ? (JSON.parse(disc.meta) as Record<string, unknown>) : {};
+    meta.aiRaw = entry;
+    writeRow(db, "disc", String(discNo), { meta });
+  }),
+
   /** Scan wizard "Save" (§8 screen 7, step 5): commits a live folder scan as a new disc pack. */
   commitScannedPack: remote("commitScannedPack", (discNo: number, meta: ScannedDiscMeta, folders: PackFolder[], files: PackFile[]) =>
     commitScannedPack(requireDb(), discNo, meta, folders, files),
   ),
 
-  /** Disc explorer "Delete" (§8 overlay E): removes the disc row and its local catalog. */
+  /** Disc explorer "Delete" (§8 overlay E): removes the disc row, its local catalog and its AI-identified items. */
   deleteDisc: remote("deleteDisc", (discNo: number) => {
     const db = requireDb();
     db.transaction(() => {
+      for (const item of listDiscItems(db, discNo)) removeDiscItem(db, item.id);
       removeDiscCatalog(db, discNo);
       deleteRow(db, "disc", String(discNo));
     });
@@ -379,16 +411,63 @@ const api = {
 
   largestFiles: remote("largestFiles", (discNo: number) => largestFiles(requireDb(), discNo)),
 
-  /** Names-and-counts summary of a disc, sent to Gemini for on-demand classification (§ AI). */
+  /** Names-and-counts summary of a disc, sent to Gemini for on-demand item identification (§ AI). */
   discAiSummary: remote("discAiSummary", (discNo: number) => buildDiscAiSummary(requireDb(), discNo)),
 
-  /** Saves a disc classification (from `ai/gemini.ts`, run client-side) into `disc.meta.ai`. */
-  saveDiscClassification: remote("saveDiscClassification", (discNo: number, classification: StoredClassification) => {
-    const db = requireDb();
-    const disc = getDisc(db, discNo);
-    if (!disc) throw new Error(`no such disc: ${discNo}`);
-    writeRow(db, "disc", String(discNo), { meta: mergeDiscClassification(disc.meta, classification) });
+  /** AI-identified items on a disc (§ AI: disc identification), for the overview tab. */
+  discItems: remote("discItems", (discNo: number) => listDiscItems(requireDb(), discNo)),
+
+  /** Disc numbers already carrying at least one AI-identified item — the library's bulk analyze skips these. */
+  discNosWithAiItems: remote("discNosWithAiItems", () => discNosWithItems(requireDb())),
+
+  /**
+   * Saves one AI analysis run (from `ai/gemini.ts`, run client-side) as a disc's identified items,
+   * replacing whatever it had before — so re-analyzing doesn't duplicate the previous run's items
+   * alongside the new ones. Returns the new items' ids.
+   */
+  applyDiscItems: remote("applyDiscItems", (discNo: number, drafts: DiscItemDraft[]) => replaceDiscItems(requireDb(), discNo, drafts)),
+
+  removeDiscItem: remote("removeDiscItem", (id: string) => {
+    removeDiscItem(requireDb(), id);
   }),
+
+  /** Sets one item's resolved external preview-image URL after a best-effort lookup (§ image preview). */
+  setDiscItemImageUrl: remote("setDiscItemImageUrl", (id: string, imageUrl: string | null) => {
+    setDiscItemImageUrl(requireDb(), id, imageUrl);
+  }),
+
+  /** Locally cached preview-image bytes for one item, for offline-first rendering (§ image preview). */
+  discItemImageBlob: remote("discItemImageBlob", (itemId: string) => getDiscItemImageBlob(requireDb(), itemId)),
+
+  /**
+   * Downloads one item's resolved preview image and caches its bytes for offline viewing. Purely
+   * opportunistic: any failure (offline, CORS, a dead link) is swallowed and reported back as
+   * `false` rather than thrown, since this must never be on the critical path of anything else.
+   */
+  cacheDiscItemImage: remote("cacheDiscItemImage", async (itemId: string, imageUrl: string): Promise<boolean> => {
+    try {
+      const response = await fetch(imageUrl);
+      if (!response.ok) return false;
+      const contentType = response.headers.get("content-type") || "image/jpeg";
+      const data = new Uint8Array(await response.arrayBuffer());
+      saveDiscItemImageBlob(requireDb(), itemId, contentType, data);
+      return true;
+    } catch {
+      return false;
+    }
+  }),
+
+  /** Counts of identified items per content type, for the library's category cards. */
+  discItemTypeCounts: remote("discItemTypeCounts", () => itemTypeCounts(requireDb())),
+
+  /** Identified items of one content type with their source disc, for the library's list. */
+  discItemsByType: remote("discItemsByType", (contentType: string) => itemsByContentType(requireDb(), contentType)),
+
+  /** Distinct genre tags across every identified item, with counts — for the library's dynamic genre cards. */
+  discItemGenreCounts: remote("discItemGenreCounts", () => itemGenreCounts(requireDb())),
+
+  /** Identified items carrying one genre tag, any content type, with their source disc. */
+  discItemsByGenre: remote("discItemsByGenre", (genre: string) => itemsByGenre(requireDb(), genre)),
 
   mediaTypeBreakdown: remote("mediaTypeBreakdown", () => mediaTypeBreakdown(requireDb())),
 

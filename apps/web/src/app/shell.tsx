@@ -28,6 +28,7 @@ const NAV_PRIMARY: NavItem[] = [
   { label: "Dashboard", icon: "Dashboard", to: "/" },
   { label: "Search", icon: "Search", to: "/search" },
   { label: "Discs", icon: "Discs", to: "/discs" },
+  { label: "Titles", icon: "Collections", to: "/titles" },
   { label: "Add disc", icon: "Add disc", to: "/scan" },
   { label: "Settings", icon: "Settings", ...SETTINGS_LINK },
 ];
@@ -38,6 +39,7 @@ const PHONE_TABS: NavItem[] = [
   { label: "Home", icon: "Home", to: "/" },
   { label: "Search", icon: "Search", to: "/search" },
   { label: "Discs", icon: "Discs", to: "/discs" },
+  { label: "Titles", icon: "Collections", to: "/titles" },
   { label: "More", icon: "More", ...SETTINGS_LINK },
 ];
 
@@ -144,9 +146,9 @@ function TopSearchBox({ compact = false }: { compact?: boolean }) {
 }
 
 function DesktopShell({ children }: { children: ReactNode }) {
-  const { account, stats } = useSession();
+  const { stats } = useSession();
   return (
-    <div style={{ display: "flex", minHeight: "100vh", background: "var(--dv-bg)" }}>
+    <div style={{ display: "flex", height: "100vh", background: "var(--dv-bg)" }}>
       <nav
         style={{
           width: 220,

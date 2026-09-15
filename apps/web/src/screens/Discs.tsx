@@ -1,10 +1,13 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
-import { type KeyboardEvent, useMemo, useState } from "react";
+import { type KeyboardEvent, type UIEvent, useEffect, useMemo, useRef, useState } from "react";
+import { analyzeDiscWithAi, buildModelFallbackChain } from "../ai/analyze.js";
+import { listGeminiModels } from "../ai/gemini.js";
+import { getGeminiApiKey, getGeminiModel } from "../ai/gemini-key.js";
 import type { DiscListItem } from "../db/catalog.js";
 import { vaultWorker } from "../db/rpc.js";
 import { formatCount, formatDate, formatSizeKb } from "../ui/format.js";
-import { Meter, Pill } from "../ui/primitives.js";
+import { Button, Meter, Pill } from "../ui/primitives.js";
 
 type SortKey = "no" | "added" | "scanned" | "pct";
 
@@ -24,11 +27,70 @@ export default function Discs() {
   const queryClient = useQueryClient();
   const discsQuery = useQuery({ queryKey: ["discs-recent"], queryFn: () => vaultWorker().listDiscs() });
   const missingQuery = useQuery({ queryKey: ["missing-discs"], queryFn: () => vaultWorker().missingDiscNumbers() });
+  const analyzedQuery = useQuery({ queryKey: ["disc-nos-with-ai-items"], queryFn: () => vaultWorker().discNosWithAiItems() });
+  const analyzedNos = useMemo(() => new Set(analyzedQuery.data ?? []), [analyzedQuery.data]);
+  const geminiApiKey = getGeminiApiKey();
+  const aiModelsQuery = useQuery({
+    queryKey: ["gemini-models", geminiApiKey],
+    queryFn: () => listGeminiModels(geminiApiKey as string),
+    enabled: !!geminiApiKey,
+    staleTime: 5 * 60 * 1000,
+  });
 
-  const [view, setView] = useState<"table" | "grid">("table");
-  const [jump, setJump] = useState("");
-  const [status, setStatus] = useState("Any status");
-  const [sort, setSort] = useState<SortKey>("no");
+  const [view, setViewState] = useState<"table" | "grid">(() => {
+    return (sessionStorage.getItem("discvault:discs:view") as "table" | "grid") ?? "table";
+  });
+  const [jump, setJumpState] = useState(() => {
+    return sessionStorage.getItem("discvault:discs:jump") ?? "";
+  });
+  const [status, setStatusState] = useState(() => {
+    return sessionStorage.getItem("discvault:discs:status") ?? "Any status";
+  });
+  const [sort, setSortState] = useState<SortKey>(() => {
+    return (sessionStorage.getItem("discvault:discs:sort") as SortKey) ?? "no";
+  });
+  const [bulkProgress, setBulkProgress] = useState<{ done: number; total: number; discNo: number } | null>(null);
+  const [bulkError, setBulkError] = useState<string | null>(null);
+  const cancelBulk = useRef(false);
+
+  const containerRef = useRef<HTMLDivElement>(null);
+  const hasRestoredScroll = useRef(false);
+
+  const setStatus = (val: string) => {
+    setStatusState(val);
+    sessionStorage.setItem("discvault:discs:status", val);
+    sessionStorage.setItem("discvault:discs:scrollPosition", "0");
+    if (containerRef.current) {
+      containerRef.current.scrollTop = 0;
+    }
+  };
+
+  const setSort = (val: SortKey) => {
+    setSortState(val);
+    sessionStorage.setItem("discvault:discs:sort", val);
+    sessionStorage.setItem("discvault:discs:scrollPosition", "0");
+    if (containerRef.current) {
+      containerRef.current.scrollTop = 0;
+    }
+  };
+
+  const setView = (val: "table" | "grid") => {
+    setViewState(val);
+    sessionStorage.setItem("discvault:discs:view", val);
+    sessionStorage.setItem("discvault:discs:scrollPosition", "0");
+    if (containerRef.current) {
+      containerRef.current.scrollTop = 0;
+    }
+  };
+
+  const setJump = (val: string) => {
+    setJumpState(val);
+    sessionStorage.setItem("discvault:discs:jump", val);
+  };
+
+  const handleScroll = (e: UIEvent<HTMLDivElement>) => {
+    sessionStorage.setItem("discvault:discs:scrollPosition", String(e.currentTarget.scrollTop));
+  };
 
   const statuses = useMemo(() => {
     const set = new Set<string>();
@@ -49,6 +111,22 @@ export default function Discs() {
     return sorted;
   }, [discsQuery.data, status, sort]);
 
+  useEffect(() => {
+    if (view) {
+      hasRestoredScroll.current = false;
+    }
+  }, [view]);
+
+  useEffect(() => {
+    if (view && !hasRestoredScroll.current && containerRef.current && rows.length > 0) {
+      const saved = sessionStorage.getItem("discvault:discs:scrollPosition");
+      if (saved) {
+        containerRef.current.scrollTop = Number(saved);
+      }
+      hasRestoredScroll.current = true;
+    }
+  }, [rows, view]);
+
   const onJumpKey = (e: KeyboardEvent<HTMLInputElement>) => {
     if (e.key !== "Enter") return;
     const n = Number(jump);
@@ -62,14 +140,63 @@ export default function Discs() {
     await queryClient.invalidateQueries({ queryKey: ["discs-recent"] });
   };
 
+  /**
+   * Sends every currently-listed disc that hasn't been analyzed yet through Gemini one at a time
+   * (never in parallel — friendly to the free-tier API key this app assumes). Each disc itself falls
+   * through every available model before counting as failed (`analyzeDiscWithAi`), so this only stops
+   * early once a disc has exhausted every model — at that point the error is shown and clicking again
+   * resumes with whatever's still unanalyzed, instead of plowing through the rest with the same failure.
+   */
+  const analyzeAllWithAi = async () => {
+    const apiKey = getGeminiApiKey();
+    if (!apiKey) {
+      setBulkError("Add a Gemini API key in Settings → AI first.");
+      return;
+    }
+    const targets = rows.filter((d) => !analyzedNos.has(d.disc_no));
+    if (targets.length === 0) return;
+    const models = buildModelFallbackChain(getGeminiModel(), aiModelsQuery.data ?? []);
+    cancelBulk.current = false;
+    setBulkError(null);
+    let done = 0;
+    try {
+      for (const d of targets) {
+        if (cancelBulk.current) break;
+        setBulkProgress({ done, total: targets.length, discNo: d.disc_no });
+        await analyzeDiscWithAi(d.disc_no, { apiKey, models, hasTitle: !!d.title });
+        done++;
+        await queryClient.invalidateQueries({ queryKey: ["disc-nos-with-ai-items"] });
+      }
+    } catch (err) {
+      setBulkError(
+        `Stopped after ${done} of ${targets.length} — disc #${targets[done]?.disc_no} failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    } finally {
+      setBulkProgress(null);
+      await queryClient.invalidateQueries({ queryKey: ["discs-recent"] });
+    }
+  };
+
   const capacityPct = (d: DiscListItem): number => {
     // No stored disc capacity yet; approximate against the media type's nominal size (4.7GB/8.5GB).
     const capKb = /9$/.test(d.media_type ?? "") ? 8_500_000 : 4_700_000;
     return d.total_kb > 0 ? Math.min(100, (d.total_kb / capKb) * 100) : 0;
   };
 
+  const unanalyzedCount = rows.filter((d) => !analyzedNos.has(d.disc_no)).length;
+
   return (
-    <div style={{ padding: "22px 24px 56px", display: "flex", flexDirection: "column", gap: 16, position: "relative" }}>
+    <div
+      style={{
+        padding: "22px 24px 0",
+        height: "100%",
+        display: "flex",
+        flexDirection: "column",
+        gap: 16,
+        position: "relative",
+        overflow: "hidden",
+      }}
+    >
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 14, flexWrap: "wrap" }}>
         <span style={{ font: "700 20px/1.2 'Instrument Sans', system-ui, sans-serif", letterSpacing: "-.02em" }}>
           Disc library {discsQuery.data ? `· ${formatCount(discsQuery.data.length)}` : ""}
@@ -109,6 +236,17 @@ export default function Discs() {
             <option value="scanned">Sort: Last scanned</option>
             <option value="pct">Sort: Size</option>
           </select>
+          {bulkProgress ? (
+            <Button variant="secondary" onClick={() => (cancelBulk.current = true)}>
+              Analyzing #{bulkProgress.discNo} ({bulkProgress.done}/{bulkProgress.total}) — Cancel
+            </Button>
+          ) : (
+            unanalyzedCount > 0 && (
+              <Button variant="secondary" onClick={analyzeAllWithAi}>
+                Analyze {unanalyzedCount === rows.length ? "all" : `${unanalyzedCount}`} with AI
+              </Button>
+            )
+          )}
           <div
             style={{
               display: "flex",
@@ -143,13 +281,28 @@ export default function Discs() {
         </div>
       </div>
 
+      {bulkError && (
+        <span style={{ font: "400 12px/1.4 'Instrument Sans', system-ui, sans-serif", color: "var(--dv-err)" }}>{bulkError}</span>
+      )}
+
       {view === "table" ? (
-        <div style={{ border: "1px solid var(--dv-border)", borderRadius: 11, overflowX: "auto" }}>
-          <div style={{ minWidth: 1100 }}>
+        <div
+          ref={containerRef}
+          onScroll={handleScroll}
+          style={{
+            flex: 1,
+            minHeight: 0,
+            border: "1px solid var(--dv-border)",
+            borderRadius: 11,
+            overflow: "auto",
+            marginBottom: 24,
+          }}
+        >
+          <div style={{ minWidth: 828 }}>
             <div
               style={{
                 display: "grid",
-                gridTemplateColumns: "64px 1.3fr 74px 64px 64px 70px 110px 92px 92px 96px 84px",
+                gridTemplateColumns: "64px 1.3fr 74px 64px 64px 70px 110px 92px",
                 gap: 10,
                 alignItems: "center",
                 padding: "0 14px",
@@ -160,6 +313,9 @@ export default function Discs() {
                 letterSpacing: ".07em",
                 textTransform: "uppercase",
                 color: "var(--dv-text-3)",
+                position: "sticky",
+                top: 0,
+                zIndex: 1,
               }}
             >
               <span>Disc</span>
@@ -169,10 +325,7 @@ export default function Discs() {
               <span>Folders</span>
               <span style={{ textAlign: "right" }}>Size</span>
               <span>% full</span>
-              <span>Status</span>
               <span>Scanned</span>
-              <span>Updated</span>
-              <span>Sync</span>
             </div>
             {rows.map((d) => {
               const pct = capacityPct(d);
@@ -184,7 +337,7 @@ export default function Discs() {
                   style={{
                     display: "grid",
                     width: "100%",
-                    gridTemplateColumns: "64px 1.3fr 74px 64px 64px 70px 110px 92px 92px 96px 84px",
+                    gridTemplateColumns: "64px 1.3fr 74px 64px 64px 70px 110px 92px",
                     gap: 10,
                     alignItems: "center",
                     padding: "0 14px",
@@ -239,15 +392,8 @@ export default function Discs() {
                       {Math.round(pct)}%
                     </span>
                   </span>
-                  <Pill label={statusLabel(d.status)} tone={statusTone(d.status)} />
                   <span className="dv-mono" style={{ fontSize: 11, color: "var(--dv-text-3)" }}>
                     {d.scanned_at ? formatDate(d.scanned_at) : "Never"}
-                  </span>
-                  <span className="dv-mono" style={{ fontSize: 11, color: "var(--dv-text-3)" }}>
-                    {formatDate(d.updated_at)}
-                  </span>
-                  <span className="dv-mono" style={{ fontSize: 11, color: "var(--dv-ok)" }}>
-                    Synced
                   </span>
                 </button>
               );
@@ -257,7 +403,7 @@ export default function Discs() {
                 key={n}
                 style={{
                   display: "grid",
-                  gridTemplateColumns: "64px 1.3fr 74px 64px 64px 70px 110px 92px 92px 96px 84px",
+                  gridTemplateColumns: "64px 1.3fr 74px 64px 64px 70px 110px 92px",
                   gap: 10,
                   alignItems: "center",
                   padding: "0 14px",
@@ -279,9 +425,6 @@ export default function Discs() {
                   #{n}
                 </span>
                 <span style={{ font: "400 13px/1.3 'Instrument Sans', system-ui, sans-serif", fontStyle: "italic" }}>Never scanned</span>
-                <span />
-                <span />
-                <span />
                 <span />
                 <span />
                 <span />
@@ -309,67 +452,69 @@ export default function Discs() {
           </div>
         </div>
       ) : (
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 14 }}>
-          {rows.map((d) => {
-            const pct = capacityPct(d);
-            return (
-              <button
-                type="button"
-                key={d.disc_no}
-                onClick={() => navigate({ to: "/discs/$no", params: { no: String(d.disc_no) } })}
-                style={{
-                  textAlign: "left",
-                  border: "1px solid var(--dv-border)",
-                  borderRadius: 12,
-                  padding: 16,
-                  background: "var(--dv-bg-sub)",
-                  cursor: "pointer",
-                  display: "flex",
-                  flexDirection: "column",
-                  gap: 10,
-                }}
-              >
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                  <span
-                    style={{
-                      padding: "4px 9px",
-                      borderRadius: 7,
-                      background: "var(--dv-text)",
-                      color: "var(--dv-bg)",
-                      font: "700 15px/1 'JetBrains Mono', monospace",
-                    }}
-                  >
-                    #{d.disc_no}
-                  </span>
-                  <Pill label={statusLabel(d.status)} tone={statusTone(d.status)} />
-                </div>
-                <span
+        <div ref={containerRef} onScroll={handleScroll} style={{ flex: 1, minHeight: 0, overflowY: "auto", paddingBottom: 24 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 14 }}>
+            {rows.map((d) => {
+              const pct = capacityPct(d);
+              return (
+                <button
+                  type="button"
+                  key={d.disc_no}
+                  onClick={() => navigate({ to: "/discs/$no", params: { no: String(d.disc_no) } })}
                   style={{
-                    font: "600 14px/1.3 'Instrument Sans', system-ui, sans-serif",
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
-                    display: "-webkit-box",
-                    WebkitLineClamp: 2,
-                    WebkitBoxOrient: "vertical",
+                    textAlign: "left",
+                    border: "1px solid var(--dv-border)",
+                    borderRadius: 12,
+                    padding: 16,
+                    background: "var(--dv-bg-sub)",
+                    cursor: "pointer",
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: 10,
                   }}
                 >
-                  {d.title ?? d.label ?? "Untitled"}
-                </span>
-                <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
-                  <span style={{ flex: 1 }}>
-                    <Meter pct={pct} />
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                    <span
+                      style={{
+                        padding: "4px 9px",
+                        borderRadius: 7,
+                        background: "var(--dv-text)",
+                        color: "var(--dv-bg)",
+                        font: "700 15px/1 'JetBrains Mono', monospace",
+                      }}
+                    >
+                      #{d.disc_no}
+                    </span>
+                    <Pill label={statusLabel(d.status)} tone={statusTone(d.status)} />
+                  </div>
+                  <span
+                    style={{
+                      font: "600 14px/1.3 'Instrument Sans', system-ui, sans-serif",
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      display: "-webkit-box",
+                      WebkitLineClamp: 2,
+                      WebkitBoxOrient: "vertical",
+                    }}
+                  >
+                    {d.title ?? d.label ?? "Untitled"}
                   </span>
-                  <span className="dv-mono" style={{ fontSize: 10, color: "var(--dv-text-3)" }}>
-                    {formatSizeKb(d.total_kb)}
-                  </span>
-                </div>
-                <div style={{ display: "flex", justifyContent: "space-between" }} className="dv-mono">
-                  <span style={{ fontSize: 11, color: "var(--dv-text-3)" }}>{d.media_type ?? "—"}</span>
-                  <span style={{ fontSize: 11, color: "var(--dv-text-3)" }}>{formatCount(d.file_count)} files</span>
-                </div>
-              </button>
-            );
-          })}
+                  <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
+                    <span style={{ flex: 1 }}>
+                      <Meter pct={pct} />
+                    </span>
+                    <span className="dv-mono" style={{ fontSize: 10, color: "var(--dv-text-3)" }}>
+                      {formatSizeKb(d.total_kb)}
+                    </span>
+                  </div>
+                  <div style={{ display: "flex", justifyContent: "space-between" }} className="dv-mono">
+                    <span style={{ fontSize: 11, color: "var(--dv-text-3)" }}>{d.media_type ?? "—"}</span>
+                    <span style={{ fontSize: 11, color: "var(--dv-text-3)" }}>{formatCount(d.file_count)} files</span>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
         </div>
       )}
     </div>

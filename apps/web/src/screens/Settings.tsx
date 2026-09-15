@@ -4,24 +4,51 @@ import { type ChangeEvent, type ReactNode, useRef, useState } from "react";
 import { signOut as authSignOut } from "../account/auth-client.js";
 import { apiRequest } from "../account/session.js";
 import { listGeminiModels } from "../ai/gemini.js";
-import { DEFAULT_GEMINI_MODEL, getGeminiApiKey, getGeminiModel, setGeminiApiKey, setGeminiModel } from "../ai/gemini-key.js";
+import {
+  addGeminiApiKey,
+  DEFAULT_GEMINI_MODEL,
+  type GeminiApiKeyEntry,
+  getActiveGeminiKeyId,
+  getGeminiModel,
+  listGeminiApiKeys,
+  removeGeminiApiKey,
+  setActiveGeminiKeyId,
+  setGeminiModel,
+} from "../ai/gemini-key.js";
 import { type Preferences, usePreferences } from "../app/preferences.js";
 import { useSession } from "../app/session.js";
 import { useTheme } from "../app/theme.js";
 import type { ArchivePreview } from "../archive/import.js";
 import { vaultWorker } from "../db/rpc.js";
+import {
+  addRawgApiKey,
+  getActiveRawgKeyId,
+  listRawgApiKeys,
+  type RawgApiKeyEntry,
+  removeRawgApiKey,
+  setActiveRawgKeyId,
+} from "../images/rawg-key.js";
+import {
+  addTmdbApiKey,
+  getActiveTmdbKeyId,
+  listTmdbApiKeys,
+  removeTmdbApiKey,
+  setActiveTmdbKeyId,
+  type TmdbApiKeyEntry,
+} from "../images/tmdb-key.js";
 import { initials } from "../ui/format.js";
-import { ConfirmDialog } from "../ui/primitives.js";
+import { Icon, type IconName } from "../ui/icons.js";
+import { ConfirmDialog, Pill } from "../ui/primitives.js";
 
 const CATEGORIES = ["video", "audio", "image", "document", "archive", "software", "other"];
 
 type Tab = "account" | "preferences" | "categories" | "ai" | "import";
-const TABS: { id: Tab; label: string }[] = [
-  { id: "account", label: "Account" },
-  { id: "preferences", label: "Preferences" },
-  { id: "categories", label: "Categories" },
-  { id: "ai", label: "AI" },
-  { id: "import", label: "Import & export" },
+const TABS: { id: Tab; label: string; icon: IconName }[] = [
+  { id: "account", label: "Account", icon: "Account" },
+  { id: "preferences", label: "Preferences", icon: "Preferences" },
+  { id: "categories", label: "Categories", icon: "Categories" },
+  { id: "ai", label: "AI", icon: "AI" },
+  { id: "import", label: "Import & export", icon: "Import" },
 ];
 
 /** §8 screen 9: account, preferences, categories and import/export. */
@@ -50,6 +77,7 @@ export default function Settings() {
             style={{
               display: "flex",
               alignItems: "center",
+              gap: 8,
               width: "100%",
               minHeight: 32,
               padding: "0 10px",
@@ -61,7 +89,8 @@ export default function Settings() {
               font: "500 13px/1 'Instrument Sans', system-ui, sans-serif",
             }}
           >
-            {t.label}
+            <Icon name={t.icon} size={15} color="currentColor" />
+            <span>{t.label}</span>
           </Link>
         ))}
       </aside>
@@ -374,22 +403,212 @@ function CategoriesTab() {
   );
 }
 
+function maskApiKey(key: string): string {
+  if (key.length <= 10) return "•".repeat(Math.max(key.length, 4));
+  return `${key.slice(0, 6)}${"•".repeat(6)}${key.slice(-4)}`;
+}
+
+/**
+ * Add/list/activate/remove rows for one provider's API keys (§ image preview shares this shape with
+ * the Gemini key list above it — same "only the active one is ever used" model, own localStorage
+ * namespace per provider).
+ */
+function ApiKeyManager({
+  radioName,
+  keys,
+  activeId,
+  keyPlaceholder,
+  onAdd,
+  onActivate,
+  onRemove,
+}: {
+  radioName: string;
+  keys: { id: string; label: string; key: string }[];
+  activeId: string | null;
+  keyPlaceholder: string;
+  onAdd: (key: string, label: string) => void;
+  onActivate: (id: string) => void;
+  onRemove: (id: string) => void;
+}) {
+  const [newLabel, setNewLabel] = useState("");
+  const [newKey, setNewKey] = useState("");
+  const [copiedId, setCopiedId] = useState<string | null>(null);
+
+  const addKey = () => {
+    const trimmed = newKey.trim();
+    if (!trimmed) return;
+    onAdd(trimmed, newLabel);
+    setNewLabel("");
+    setNewKey("");
+  };
+
+  const copyKey = async (id: string, key: string) => {
+    await navigator.clipboard.writeText(key);
+    setCopiedId(id);
+    window.setTimeout(() => setCopiedId((cur) => (cur === id ? null : cur)), 1500);
+  };
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+      {keys.length === 0 && (
+        <span style={{ font: "400 12px/1.4 'Instrument Sans', system-ui, sans-serif", color: "var(--dv-text-3)" }}>No keys added yet.</span>
+      )}
+      {keys.map((k) => (
+        <div
+          key={k.id}
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 10,
+            padding: "8px 10px",
+            border: "1px solid var(--dv-border)",
+            borderRadius: 8,
+            background: k.id === activeId ? "var(--dv-accent-soft)" : "var(--dv-bg-sub)",
+          }}
+        >
+          <input
+            type="radio"
+            name={radioName}
+            checked={k.id === activeId}
+            onChange={() => onActivate(k.id)}
+            title="Make this the active key"
+            style={checkStyle}
+          />
+          <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column" }}>
+            <span style={{ font: "500 12px/1.3 'Instrument Sans', system-ui, sans-serif" }}>{k.label}</span>
+            <span className="dv-mono" style={{ fontSize: 11, color: "var(--dv-text-3)" }}>
+              {maskApiKey(k.key)}
+            </span>
+          </div>
+          {k.id === activeId && <Pill label="Active" tone="ok" />}
+          <button
+            type="button"
+            onClick={() => copyKey(k.id, k.key)}
+            title={copiedId === k.id ? "Copied" : "Copy this key"}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              border: 0,
+              background: "transparent",
+              color: copiedId === k.id ? "var(--dv-ok)" : "var(--dv-text-3)",
+              cursor: "pointer",
+              padding: 0,
+            }}
+          >
+            <Icon name="Copy" size={14} color="currentColor" />
+          </button>
+          <button
+            type="button"
+            onClick={() => onRemove(k.id)}
+            title="Remove this key"
+            style={{ border: 0, background: "transparent", color: "var(--dv-text-3)", cursor: "pointer", font: "600 15px/1 sans-serif" }}
+          >
+            ×
+          </button>
+        </div>
+      ))}
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+        <input
+          value={newLabel}
+          onChange={(e) => setNewLabel(e.target.value)}
+          placeholder="Label (optional)"
+          autoComplete="off"
+          style={{
+            width: 140,
+            height: 34,
+            padding: "0 10px",
+            border: "1px solid var(--dv-border)",
+            borderRadius: 8,
+            background: "var(--dv-bg-sub)",
+            font: "400 12px/1 'Instrument Sans', system-ui, sans-serif",
+          }}
+        />
+        <input
+          type="password"
+          value={newKey}
+          onChange={(e) => setNewKey(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && addKey()}
+          placeholder={keyPlaceholder}
+          autoComplete="off"
+          style={{
+            flex: 1,
+            minWidth: 160,
+            height: 34,
+            padding: "0 10px",
+            border: "1px solid var(--dv-border)",
+            borderRadius: 8,
+            background: "var(--dv-bg-sub)",
+            font: "400 12px/1 'JetBrains Mono', monospace",
+          }}
+        />
+        <button
+          type="button"
+          onClick={addKey}
+          disabled={!newKey.trim()}
+          style={{
+            minHeight: 34,
+            padding: "0 13px",
+            border: 0,
+            borderRadius: 8,
+            background: "var(--dv-accent)",
+            color: "#fff",
+            font: "500 12px/1 'Instrument Sans', system-ui, sans-serif",
+            cursor: newKey.trim() ? "pointer" : "default",
+            opacity: newKey.trim() ? 1 : 0.5,
+          }}
+        >
+          Add
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function AiTab() {
-  const [key, setKey] = useState(() => getGeminiApiKey() ?? "");
+  const [keys, setKeys] = useState<GeminiApiKeyEntry[]>(() => listGeminiApiKeys());
+  const [activeId, setActiveId] = useState<string | null>(() => getActiveGeminiKeyId());
   const [model, setModel] = useState(() => getGeminiModel());
   const [saved, setSaved] = useState(false);
 
-  const trimmedKey = key.trim();
+  const [tmdbKeys, setTmdbKeys] = useState<TmdbApiKeyEntry[]>(() => listTmdbApiKeys());
+  const [tmdbActiveId, setTmdbActiveId] = useState<string | null>(() => getActiveTmdbKeyId());
+  const [rawgKeys, setRawgKeys] = useState<RawgApiKeyEntry[]>(() => listRawgApiKeys());
+  const [rawgActiveId, setRawgActiveId] = useState<string | null>(() => getActiveRawgKeyId());
+
+  const refreshKeys = () => {
+    setKeys(listGeminiApiKeys());
+    setActiveId(getActiveGeminiKeyId());
+  };
+
+  const activateKey = (id: string) => {
+    setActiveGeminiKeyId(id);
+    setActiveId(id);
+  };
+
+  const deleteKey = (id: string) => {
+    removeGeminiApiKey(id);
+    refreshKeys();
+  };
+
+  const refreshTmdbKeys = () => {
+    setTmdbKeys(listTmdbApiKeys());
+    setTmdbActiveId(getActiveTmdbKeyId());
+  };
+  const refreshRawgKeys = () => {
+    setRawgKeys(listRawgApiKeys());
+    setRawgActiveId(getActiveRawgKeyId());
+  };
+
+  const activeKey = keys.find((k) => k.id === activeId)?.key ?? "";
   const modelsQuery = useQuery({
-    queryKey: ["gemini-models", trimmedKey],
-    queryFn: () => listGeminiModels(trimmedKey),
-    enabled: trimmedKey.length > 10,
+    queryKey: ["gemini-models", activeKey],
+    queryFn: () => listGeminiModels(activeKey),
+    enabled: activeKey.length > 10,
     staleTime: 5 * 60 * 1000,
   });
   const models = modelsQuery.data ?? [];
 
-  const save = () => {
-    setGeminiApiKey(key.trim() || null);
+  const saveModel = () => {
     setGeminiModel(model.trim() || null);
     setSaved(true);
     window.setTimeout(() => setSaved(false), 1500);
@@ -400,52 +619,49 @@ function AiTab() {
       <SectionTitle>AI</SectionTitle>
       <span style={{ font: "400 13px/1.5 'Instrument Sans', system-ui, sans-serif", color: "var(--dv-text-2)" }}>
         Add a free Gemini API key to get an AI-suggested category for a disc (from its folder and file names — this app never sends file
-        contents anywhere). The key is stored only in this browser and sent only to Google's API, never synced or shared. Get one at{" "}
+        contents anywhere). Keys are stored only in this browser and sent only to Google's API, never synced or shared. Get one at{" "}
         <a href="https://aistudio.google.com/apikey" target="_blank" rel="noreferrer" style={{ color: "var(--dv-accent)" }}>
           aistudio.google.com/apikey
         </a>
         .
       </span>
       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-        <span style={{ font: "600 13px/1 'Instrument Sans', system-ui, sans-serif" }}>Gemini API key</span>
-        <div style={{ display: "flex", gap: 8 }}>
-          <input
-            type="password"
-            value={key}
-            onChange={(e) => setKey(e.target.value)}
-            placeholder="AIza…"
-            autoComplete="off"
-            style={{
-              flex: 1,
-              minWidth: 0,
-              height: 34,
-              padding: "0 10px",
-              border: "1px solid var(--dv-border)",
-              borderRadius: 8,
-              background: "var(--dv-bg-sub)",
-              font: "400 12px/1 'JetBrains Mono', monospace",
-            }}
-          />
+        <span style={{ font: "600 13px/1 'Instrument Sans', system-ui, sans-serif" }}>Gemini API keys</span>
+        <span style={{ font: "400 12px/1.4 'Instrument Sans', system-ui, sans-serif", color: "var(--dv-text-3)" }}>
+          Add as many as you like (e.g. a spare for when one hits its daily quota) — only the one marked active is ever used.
+        </span>
+        <ApiKeyManager
+          radioName="active-gemini-key"
+          keys={keys}
+          activeId={activeId}
+          keyPlaceholder="AIza…"
+          onAdd={(key, label) => {
+            addGeminiApiKey(key, label); // label is optional — addGeminiApiKey falls back to "Key N"
+            refreshKeys();
+          }}
+          onActivate={activateKey}
+          onRemove={deleteKey}
+        />
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+          <span style={{ font: "600 13px/1 'Instrument Sans', system-ui, sans-serif" }}>Gemini model</span>
           <button
             type="button"
-            onClick={save}
+            onClick={saveModel}
             style={{
-              minHeight: 34,
-              padding: "0 13px",
-              border: 0,
-              borderRadius: 8,
-              background: "var(--dv-accent)",
-              color: "#fff",
-              font: "500 12px/1 'Instrument Sans', system-ui, sans-serif",
+              minHeight: 26,
+              padding: "0 10px",
+              border: "1px solid var(--dv-border-2)",
+              borderRadius: 7,
+              background: "var(--dv-bg-sub)",
+              font: "500 11px/1 'Instrument Sans', system-ui, sans-serif",
               cursor: "pointer",
             }}
           >
             {saved ? "Saved" : "Save"}
           </button>
         </div>
-      </div>
-      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-        <span style={{ font: "600 13px/1 'Instrument Sans', system-ui, sans-serif" }}>Gemini model</span>
         {models.length > 0 ? (
           <select
             value={model}
@@ -463,7 +679,8 @@ function AiTab() {
             {!models.some((m) => m.name === model) && <option value={model}>{model}</option>}
             {models.map((m) => (
               <option key={m.name} value={m.name}>
-                {m.displayName} ({m.name})
+                {m.displayName}
+                {m.recommended ? " — Recommended" : ""}
               </option>
             ))}
           </select>
@@ -489,11 +706,75 @@ function AiTab() {
             ? "Loading the models your key can use…"
             : modelsQuery.isError
               ? `Couldn't load the model list (${modelsQuery.error instanceof Error ? modelsQuery.error.message : "unknown error"}) — enter a model id manually.`
-              : trimmedKey.length <= 10
-                ? "Add your API key above to pick from the models it can use."
+              : activeKey.length <= 10
+                ? "Add and activate an API key above to pick from the models it can use."
                 : null}{" "}
           Defaults to {DEFAULT_GEMINI_MODEL}.
         </span>
+      </div>
+
+      <SectionTitle>Preview images</SectionTitle>
+      <span style={{ font: "400 13px/1.5 'Instrument Sans', system-ui, sans-serif", color: "var(--dv-text-2)" }}>
+        Gemini can't browse the web, so it can't return a real cover image — these optional keys let identified items fetch one from a real
+        catalog instead. Software and music covers come from Apple's iTunes catalog automatically, no key needed.
+      </span>
+
+      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        <span style={{ font: "600 13px/1 'Instrument Sans', system-ui, sans-serif" }}>TMDB API keys (movies)</span>
+        <span style={{ font: "400 12px/1.4 'Instrument Sans', system-ui, sans-serif", color: "var(--dv-text-3)" }}>
+          Used to fetch a poster after AI identifies a movie. Get a free one at{" "}
+          <a href="https://www.themoviedb.org/settings/api" target="_blank" rel="noreferrer" style={{ color: "var(--dv-accent)" }}>
+            themoviedb.org/settings/api
+          </a>
+          . This product uses the TMDB API but is not endorsed or certified by TMDB.
+        </span>
+        <ApiKeyManager
+          radioName="active-tmdb-key"
+          keys={tmdbKeys}
+          activeId={tmdbActiveId}
+          keyPlaceholder="TMDB API key"
+          onAdd={(key, label) => {
+            addTmdbApiKey(key, label);
+            refreshTmdbKeys();
+          }}
+          onActivate={(id) => {
+            setActiveTmdbKeyId(id);
+            setTmdbActiveId(id);
+          }}
+          onRemove={(id) => {
+            removeTmdbApiKey(id);
+            refreshTmdbKeys();
+          }}
+        />
+      </div>
+
+      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        <span style={{ font: "600 13px/1 'Instrument Sans', system-ui, sans-serif" }}>RAWG API keys (games)</span>
+        <span style={{ font: "400 12px/1.4 'Instrument Sans', system-ui, sans-serif", color: "var(--dv-text-3)" }}>
+          Used to fetch cover art after AI identifies a game. Get a free one at{" "}
+          <a href="https://rawg.io/apidocs" target="_blank" rel="noreferrer" style={{ color: "var(--dv-accent)" }}>
+            rawg.io/apidocs
+          </a>
+          . Game data provided by RAWG.
+        </span>
+        <ApiKeyManager
+          radioName="active-rawg-key"
+          keys={rawgKeys}
+          activeId={rawgActiveId}
+          keyPlaceholder="RAWG API key"
+          onAdd={(key, label) => {
+            addRawgApiKey(key, label);
+            refreshRawgKeys();
+          }}
+          onActivate={(id) => {
+            setActiveRawgKeyId(id);
+            setRawgActiveId(id);
+          }}
+          onRemove={(id) => {
+            removeRawgApiKey(id);
+            refreshRawgKeys();
+          }}
+        />
       </div>
     </div>
   );

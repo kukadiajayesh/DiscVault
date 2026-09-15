@@ -187,6 +187,29 @@ export function largestFiles(db: SqlDb, discNo: number, limit = 20): FileEntry[]
     .map((f): FileEntry => ({ kind: "file", ...f }));
 }
 
+/** Every folder's path on a disc, root to leaf, alphabetical — for sending the full structure to AI. */
+export function allFolderPaths(db: SqlDb, discNo: number): string[] {
+  return db
+    .all<{ rel_path: string }>(`SELECT rel_path FROM folder WHERE disc_no = ? ORDER BY rel_path COLLATE NOCASE`, [discNo])
+    .map((r) => r.rel_path);
+}
+
+/** Every file's path on a disc, alphabetical — for sending the full structure to AI. */
+export function allFilePaths(db: SqlDb, discNo: number): string[] {
+  return db
+    .all<{ rel_path: string }>(`SELECT rel_path FROM file WHERE disc_no = ? ORDER BY rel_path COLLATE NOCASE`, [discNo])
+    .map((r) => r.rel_path);
+}
+
+/**
+ * Above this many combined folders+files, a disc's full listing is refused rather than sent to
+ * Gemini: flash-tier models have roughly a 1M-token context, and short path lines run several
+ * tokens each once prompt instructions and the response budget are accounted for. Nothing in the
+ * current catalog comes close to this — it exists so a pathological disc fails clearly instead of
+ * producing a huge, possibly-truncated request.
+ */
+export const MAX_AI_SUMMARY_ENTRIES = 120_000;
+
 export interface DiscAiSummary {
   discNo: number;
   title: string | null;
@@ -195,25 +218,25 @@ export interface DiscAiSummary {
   folderCount: number;
   fileCount: number;
   totalKb: number;
-  topFolders: string[];
+  allFolderPaths: string[];
+  allFilePaths: string[];
   extensions: { ext: string; files: number }[];
-  sampleFileNames: string[];
 }
 
 /**
- * Compact, names-and-counts summary of a disc's catalog (§ AI: disc classification) — never file
- * contents, which this app doesn't have access to in the first place (only the catalog metadata
- * is stored, on-device).
+ * The whole structure of a disc's catalog (§ AI: disc identification) — every folder and file
+ * name/path, never file contents (which this app doesn't have access to in the first place; only
+ * catalog metadata is stored, on-device).
  */
 export function buildDiscAiSummary(db: SqlDb, discNo: number): DiscAiSummary | undefined {
   const disc = getDisc(db, discNo);
   if (!disc) return undefined;
-  const topFolders = listFolderChildren(db, discNo, null)
-    .filter((c): c is FolderEntry => c.kind === "folder")
-    .slice(0, 40)
-    .map((f) => f.name);
+  if (disc.folder_count + disc.file_count > MAX_AI_SUMMARY_ENTRIES) {
+    throw new Error(
+      `Disc #${discNo} has ${disc.folder_count + disc.file_count} folders/files — too many to send to Gemini in one request (limit: ${MAX_AI_SUMMARY_ENTRIES}).`,
+    );
+  }
   const extensions = extensionBreakdown(db, discNo, 20).map((e) => ({ ext: e.ext, files: e.files }));
-  const sampleFileNames = largestFiles(db, discNo, 20).map((f) => f.name);
   return {
     discNo,
     title: disc.title,
@@ -222,8 +245,8 @@ export function buildDiscAiSummary(db: SqlDb, discNo: number): DiscAiSummary | u
     folderCount: disc.folder_count,
     fileCount: disc.file_count,
     totalKb: disc.total_kb,
-    topFolders,
+    allFolderPaths: allFolderPaths(db, discNo),
+    allFilePaths: allFilePaths(db, discNo),
     extensions,
-    sampleFileNames,
   };
 }

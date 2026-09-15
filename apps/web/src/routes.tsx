@@ -10,6 +10,7 @@ import Search from "./screens/Search.js";
 import Settings from "./screens/Settings.js";
 import Setup from "./screens/Setup.js";
 import Sync from "./screens/Sync.js";
+import Titles from "./screens/Titles.js";
 
 /** Code-based routes for the 14 screens (§8) plus the disc-explorer browse splat and settings splat. */
 
@@ -65,6 +66,10 @@ const scanRoute = createRoute({
   component: Scan,
 });
 
+const titlesRoute = createRoute({ getParentRoute: () => appLayoutRoute, path: "/titles", component: Titles });
+const titlesGenreRoute = createRoute({ getParentRoute: () => titlesRoute, path: "/genre/$genre", component: Titles });
+const titlesByTypeRoute = createRoute({ getParentRoute: () => titlesRoute, path: "/$type", component: Titles });
+
 const syncRoute = createRoute({ getParentRoute: () => appLayoutRoute, path: "/sync", component: Sync });
 const settingsRoute = createRoute({ getParentRoute: () => appLayoutRoute, path: "/settings/$", component: Settings });
 
@@ -76,6 +81,7 @@ const routeTree = rootRoute.addChildren([
     searchRoute,
     discsRoute,
     discRoute.addChildren([discBrowseRoute]),
+    titlesRoute.addChildren([titlesGenreRoute, titlesByTypeRoute]),
     scanRoute,
     syncRoute,
     settingsRoute,

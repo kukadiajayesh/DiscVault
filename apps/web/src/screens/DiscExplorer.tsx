@@ -1,12 +1,13 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
-import { readDiscClassification } from "../ai/classification.js";
-import { classifyDiscWithGemini, listGeminiModels } from "../ai/gemini.js";
-import { getGeminiApiKey, getGeminiModel, setGeminiModel } from "../ai/gemini-key.js";
+import { analyzeDiscWithAi, buildModelFallbackChain, fetchPreviewImagesForDisc } from "../ai/analyze.js";
+import { listGeminiModels } from "../ai/gemini.js";
+import { getGeminiApiKey, getGeminiModel } from "../ai/gemini-key.js";
 import type { FolderChild } from "../db/catalog.js";
 import { vaultWorker } from "../db/rpc.js";
 import { formatCount, formatDate, formatSizeKb } from "../ui/format.js";
+import { ItemPreviewImage } from "../ui/item-preview-image.js";
 import { ConfirmDialog, categoryColor, Meter } from "../ui/primitives.js";
 
 type Tab = "browse" | "overview" | "activity";
@@ -60,6 +61,11 @@ export default function DiscExplorer() {
     queryFn: () => vaultWorker().largestFiles(discNo),
     enabled: tab === "overview",
   });
+  const itemsQuery = useQuery({
+    queryKey: ["disc-items", discNo],
+    queryFn: () => vaultWorker().discItems(discNo),
+    enabled: tab === "overview",
+  });
 
   useEffect(() => {
     setNotes(discQuery.data?.notes ?? "");
@@ -92,13 +98,18 @@ export default function DiscExplorer() {
     setAnalyzing(true);
     setAiError(null);
     try {
-      const summary = await vaultWorker().discAiSummary(discNo);
-      if (!summary) throw new Error("disc not found");
-      const model = aiModel.trim() || getGeminiModel();
-      const classification = await classifyDiscWithGemini(apiKey, summary, model);
-      await vaultWorker().saveDiscClassification(discNo, classification);
-      setGeminiModel(model);
-      await queryClient.invalidateQueries({ queryKey: ["disc", discNo] });
+      const models = buildModelFallbackChain(aiModel, aiModels);
+      const result = await analyzeDiscWithAi(discNo, { apiKey, models, hasTitle: !!discQuery.data?.title });
+      setAiModel(result.model);
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["disc-items", discNo] }),
+        queryClient.invalidateQueries({ queryKey: ["disc", discNo] }),
+      ]);
+      // Fire-and-forget: item cards are already useful without preview images, so don't block on
+      // them — re-invalidate once they've resolved so the cards pick them up.
+      fetchPreviewImagesForDisc(discNo)
+        .catch(() => {})
+        .then(() => queryClient.invalidateQueries({ queryKey: ["disc-items", discNo] }));
     } catch (err) {
       setAiError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -106,8 +117,12 @@ export default function DiscExplorer() {
     }
   };
 
+  const removeItem = async (id: string) => {
+    await vaultWorker().removeDiscItem(id);
+    await queryClient.invalidateQueries({ queryKey: ["disc-items", discNo] });
+  };
+
   const d = discQuery.data;
-  const aiClassification = readDiscClassification(d?.meta ?? null);
   const capKb = /9$/.test(d?.media_type ?? "") ? 8_500_000 : 4_700_000;
   const pct = d && d.total_kb > 0 ? Math.min(100, Math.round((d.total_kb / capKb) * 100)) : 0;
 
@@ -325,6 +340,10 @@ export default function DiscExplorer() {
                       >
                         {e.name}
                       </span>
+                      <span className="dv-mono" style={{ fontSize: 11, color: "var(--dv-text-2)" }}>
+                        {formatSizeKb(e.size_kb)}
+                      </span>
+                      <span style={{ width: 80 }} />
                     </>
                   ) : (
                     <>
@@ -470,97 +489,137 @@ export default function DiscExplorer() {
                 </div>
               ))}
             </div>
-            <div
-              style={{
-                padding: 16,
-                border: "1px solid var(--dv-border)",
-                borderRadius: 11,
-                display: "flex",
-                flexDirection: "column",
-                gap: 10,
-              }}
-            >
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
-                <span style={{ font: "600 13px/1 'Instrument Sans', system-ui, sans-serif" }}>AI classification</span>
-                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                  {aiModels.length > 0 ? (
-                    <select
-                      value={aiModel}
-                      onChange={(e) => setAiModel(e.target.value)}
-                      disabled={analyzing}
-                      title="Gemini model to use for this analysis"
-                      style={{
-                        width: 148,
-                        minHeight: 26,
-                        padding: "0 6px",
-                        border: "1px solid var(--dv-border-2)",
-                        borderRadius: 7,
-                        background: "var(--dv-bg-sub)",
-                        font: "400 11px/1 'JetBrains Mono', monospace",
-                      }}
-                    >
-                      {!aiModels.some((m) => m.name === aiModel) && <option value={aiModel}>{aiModel}</option>}
-                      {aiModels.map((m) => (
-                        <option key={m.name} value={m.name}>
-                          {m.name}
-                        </option>
-                      ))}
-                    </select>
-                  ) : (
-                    <input
-                      value={aiModel}
-                      onChange={(e) => setAiModel(e.target.value)}
-                      disabled={analyzing}
-                      title="Gemini model to use for this analysis"
-                      style={{
-                        width: 128,
-                        minHeight: 26,
-                        padding: "0 8px",
-                        border: "1px solid var(--dv-border-2)",
-                        borderRadius: 7,
-                        background: "var(--dv-bg-sub)",
-                        font: "400 11px/1 'JetBrains Mono', monospace",
-                      }}
-                    />
-                  )}
-                  <button
-                    type="button"
-                    onClick={analyzeWithAi}
+          </div>
+          <div
+            style={{
+              padding: 16,
+              border: "1px solid var(--dv-border)",
+              borderRadius: 11,
+              display: "flex",
+              flexDirection: "column",
+              gap: 10,
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+              <span style={{ font: "600 13px/1 'Instrument Sans', system-ui, sans-serif" }}>AI-identified items</span>
+              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                {aiModels.length > 0 ? (
+                  <select
+                    value={aiModel}
+                    onChange={(e) => setAiModel(e.target.value)}
                     disabled={analyzing}
+                    title="Gemini model to use for this analysis"
                     style={{
+                      width: 148,
                       minHeight: 26,
-                      padding: "0 10px",
+                      padding: "0 6px",
                       border: "1px solid var(--dv-border-2)",
                       borderRadius: 7,
                       background: "var(--dv-bg-sub)",
-                      font: "500 11px/1 'Instrument Sans', system-ui, sans-serif",
-                      cursor: analyzing ? "default" : "pointer",
-                      opacity: analyzing ? 0.6 : 1,
+                      font: "400 11px/1 'JetBrains Mono', monospace",
                     }}
                   >
-                    {analyzing ? "Analyzing…" : aiClassification ? "Re-analyze" : "Analyze with AI"}
-                  </button>
+                    {!aiModels.some((m) => m.name === aiModel) && <option value={aiModel}>{aiModel}</option>}
+                    {aiModels.map((m) => (
+                      <option key={m.name} value={m.name}>
+                        {m.displayName}
+                        {m.recommended ? " (Recommended)" : ""}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <input
+                    value={aiModel}
+                    onChange={(e) => setAiModel(e.target.value)}
+                    disabled={analyzing}
+                    title="Gemini model to use for this analysis"
+                    style={{
+                      width: 128,
+                      minHeight: 26,
+                      padding: "0 8px",
+                      border: "1px solid var(--dv-border-2)",
+                      borderRadius: 7,
+                      background: "var(--dv-bg-sub)",
+                      font: "400 11px/1 'JetBrains Mono', monospace",
+                    }}
+                  />
+                )}
+                <button
+                  type="button"
+                  onClick={analyzeWithAi}
+                  disabled={analyzing}
+                  style={{
+                    minHeight: 26,
+                    padding: "0 10px",
+                    border: "1px solid var(--dv-border-2)",
+                    borderRadius: 7,
+                    background: "var(--dv-bg-sub)",
+                    font: "500 11px/1 'Instrument Sans', system-ui, sans-serif",
+                    cursor: analyzing ? "default" : "pointer",
+                    opacity: analyzing ? 0.6 : 1,
+                  }}
+                >
+                  {analyzing ? "Analyzing…" : (itemsQuery.data?.length ?? 0) > 0 ? "Re-analyze" : "Analyze with AI"}
+                </button>
+              </div>
+            </div>
+
+            {(itemsQuery.data ?? []).map((item) => (
+              <div key={item.id} style={itemCardStyle}>
+                <ItemPreviewImage itemId={item.id} imageUrl={item.imageUrl} style={itemPreviewImageStyle} />
+                <div style={{ display: "flex", flexDirection: "column", gap: 8, minWidth: 0, flex: 1 }}>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                      <span style={contentTypeBadgeStyle}>{item.contentType}</span>
+                      <span style={{ font: "600 13px/1.3 'Instrument Sans', system-ui, sans-serif" }}>{item.title ?? item.label}</span>
+                    </div>
+                    <button type="button" onClick={() => removeItem(item.id)} title="Remove this item" style={removeItemButtonStyle}>
+                      ×
+                    </button>
+                  </div>
+                  {item.title && (
+                    <span className="dv-mono" style={{ fontSize: 11, color: "var(--dv-text-3)" }}>
+                      {[item.platform, item.year, item.developer ?? item.publisher].filter(Boolean).join(" · ")}
+                    </span>
+                  )}
+                  <span style={{ font: "400 12px/1.4 'Instrument Sans', system-ui, sans-serif", color: "var(--dv-text-2)" }}>
+                    {item.title ? item.description : item.summary}
+                  </span>
+                  {item.genres.length > 0 && (
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                      {item.genres.map((genre) => (
+                        <button
+                          type="button"
+                          key={genre}
+                          onClick={() => navigate({ to: "/titles/genre/$genre", params: { genre } })}
+                          title={`Browse everything tagged "${genre}"`}
+                          style={genrePillStyle}
+                        >
+                          {genre}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+                    <button type="button" onClick={() => goPath(item.path)} style={openOnDiscButtonStyle}>
+                      {item.path || "(whole disc)"} →
+                    </button>
+                    <span className="dv-mono" style={{ fontSize: 10, color: "var(--dv-text-3)" }}>
+                      {item.confidence} confidence · {formatDate(item.analyzedAt)}
+                    </span>
+                  </div>
                 </div>
               </div>
-              {aiClassification ? (
-                <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                  <span style={{ font: "600 13px/1.3 'Instrument Sans', system-ui, sans-serif" }}>{aiClassification.label}</span>
-                  <span style={{ font: "400 12px/1.4 'Instrument Sans', system-ui, sans-serif", color: "var(--dv-text-2)" }}>
-                    {aiClassification.summary}
-                  </span>
-                  <span className="dv-mono" style={{ fontSize: 10, color: "var(--dv-text-3)" }}>
-                    {aiClassification.confidence} confidence · {formatDate(aiClassification.analyzedAt)}
-                  </span>
-                </div>
-              ) : (
-                <span style={{ font: "400 12px/1.4 'Instrument Sans', system-ui, sans-serif", color: "var(--dv-text-3)" }}>
-                  Not analyzed yet — suggests a category from this disc's folder and file names via Gemini.
-                </span>
-              )}
-              {aiError && (
-                <span style={{ font: "400 11px/1.4 'Instrument Sans', system-ui, sans-serif", color: "var(--dv-err)" }}>{aiError}</span>
-              )}
-            </div>
+            ))}
+
+            {(itemsQuery.data ?? []).length === 0 && (
+              <span style={{ font: "400 12px/1.4 'Instrument Sans', system-ui, sans-serif", color: "var(--dv-text-3)" }}>
+                Not analyzed yet — identifies this disc's games/movies/software/music by folder and file names via Gemini.
+              </span>
+            )}
+            {aiError && (
+              <span style={{ font: "400 11px/1.4 'Instrument Sans', system-ui, sans-serif", color: "var(--dv-err)" }}>{aiError}</span>
+            )}
           </div>
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
             <span style={{ font: "600 13px/1 'Instrument Sans', system-ui, sans-serif" }}>Notes</span>
@@ -614,4 +673,57 @@ const crumbStyle = {
   padding: "2px 4px",
   font: "400 12px/1 'JetBrains Mono', monospace",
   color: "var(--dv-text-2)",
+} as const;
+
+const itemCardStyle = {
+  display: "flex",
+  alignItems: "flex-start",
+  gap: 10,
+  paddingTop: 10,
+  borderTop: "1px solid var(--dv-border)",
+} as const;
+
+const itemPreviewImageStyle = {
+  width: 56,
+  height: 56,
+  flex: "none",
+  borderRadius: 8,
+  objectFit: "cover",
+  background: "var(--dv-bg-sub)",
+} as const;
+
+const contentTypeBadgeStyle = {
+  padding: "1px 7px",
+  borderRadius: 99,
+  background: "var(--dv-off-soft)",
+  font: "500 10px/1.6 'Instrument Sans', system-ui, sans-serif",
+  textTransform: "capitalize",
+} as const;
+
+const genrePillStyle = {
+  padding: "3px 9px",
+  borderRadius: 99,
+  border: "1px solid var(--dv-border-2)",
+  background: "var(--dv-bg-sub)",
+  color: "var(--dv-text-2)",
+  font: "500 11px/1.4 'Instrument Sans', system-ui, sans-serif",
+  cursor: "pointer",
+} as const;
+
+const removeItemButtonStyle = {
+  border: 0,
+  background: "transparent",
+  color: "var(--dv-text-3)",
+  cursor: "pointer",
+  padding: "0 4px",
+  font: "600 14px/1 'Instrument Sans', system-ui, sans-serif",
+} as const;
+
+const openOnDiscButtonStyle = {
+  border: 0,
+  background: "transparent",
+  color: "var(--dv-accent)",
+  cursor: "pointer",
+  padding: 0,
+  font: "500 11px/1.4 'JetBrains Mono', monospace",
 } as const;
