@@ -146,3 +146,51 @@ textarea::placeholder {
 .dv-mono {
   font-family: "JetBrains Mono", ui-monospace, monospace;
 }
+
+/* Titles library: a content type or genre bucket. */
+.dv-category-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 12px 14px 12px 12px;
+  border: 1px solid var(--dv-border);
+  border-radius: 12px;
+  background: var(--dv-bg-sub);
+  text-align: left;
+  cursor: pointer;
+  transition:
+    border-color 0.15s ease,
+    background 0.15s ease;
+}
+.dv-category-card:hover {
+  border-color: var(--dv-accent-line);
+  background: var(--dv-hover);
+}
+.dv-category-card:focus-visible {
+  border-radius: 12px;
+}
+.dv-category-card[data-empty] {
+  opacity: 0.55;
+}
+.dv-category-card__icon {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 38px;
+  height: 38px;
+  border-radius: 10px;
+  background: var(--dv-accent-soft);
+  color: var(--dv-accent);
+}
+.dv-category-card__chevron {
+  flex: none;
+  color: var(--dv-text-3);
+  transition:
+    transform 0.15s ease,
+    color 0.15s ease;
+}
+.dv-category-card:hover .dv-category-card__chevron {
+  transform: translateX(2px);
+  color: var(--dv-text-2);
+}

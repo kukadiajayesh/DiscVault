@@ -5,6 +5,7 @@ import type { DiscContentType } from "../ai/classification.js";
 import type { DiscItemWithSource } from "../db/disc-items.js";
 import { vaultWorker } from "../db/rpc.js";
 import { formatDate } from "../ui/format.js";
+import { GenreIcon, type IconKind } from "../ui/genre-icon.js";
 import { ItemPreviewImage } from "../ui/item-preview-image.js";
 import { Overlay, SectionLabel } from "../ui/primitives.js";
 
@@ -53,14 +54,15 @@ function TitlesCategories() {
   return (
     <div style={{ padding: "20px 24px", display: "flex", flexDirection: "column", gap: 20 }}>
       <span style={{ font: "700 19px/1.2 'Instrument Sans', system-ui, sans-serif" }}>Titles</span>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 14 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 10 }}>
         {CONTENT_TYPES.map((ct) => (
-          <button type="button" key={ct} onClick={() => navigate({ to: "/titles/$type", params: { type: ct } })} style={categoryCardStyle}>
-            <span style={{ font: "600 14px/1.2 'Instrument Sans', system-ui, sans-serif" }}>{CONTENT_TYPE_LABEL[ct]}</span>
-            <span className="dv-mono" style={{ fontSize: 22, fontWeight: 700 }}>
-              {counts.get(ct) ?? 0}
-            </span>
-          </button>
+          <CategoryCard
+            key={ct}
+            label={CONTENT_TYPE_LABEL[ct]}
+            kind="title"
+            count={counts.get(ct) ?? 0}
+            onClick={() => navigate({ to: "/titles/$type", params: { type: ct } })}
+          />
         ))}
       </div>
       {(countsQuery.data ?? []).length === 0 && !countsQuery.isLoading && (
@@ -71,24 +73,64 @@ function TitlesCategories() {
       {genreCounts.length > 0 && (
         <>
           <SectionLabel>Genres</SectionLabel>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 14 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 10 }}>
             {genreCounts.map((g) => (
-              <button
-                type="button"
+              <CategoryCard
                 key={g.genre}
+                label={g.genre}
+                kind="genre"
+                count={g.count}
                 onClick={() => navigate({ to: "/titles/genre/$genre", params: { genre: g.genre } })}
-                style={categoryCardStyle}
-              >
-                <span style={{ font: "600 14px/1.2 'Instrument Sans', system-ui, sans-serif" }}>{g.genre}</span>
-                <span className="dv-mono" style={{ fontSize: 22, fontWeight: 700 }}>
-                  {g.count}
-                </span>
-              </button>
+              />
             ))}
           </div>
         </>
       )}
     </div>
+  );
+}
+
+/** One browsable bucket (content type or genre): icon tile, name with its title count, and a chevron. */
+function CategoryCard({ label, kind, count, onClick }: { label: string; kind: IconKind; count: number; onClick: () => void }) {
+  return (
+    <button type="button" onClick={onClick} className="dv-category-card" data-empty={count === 0 || undefined}>
+      <span className="dv-category-card__icon">
+        <GenreIcon name={label} type={kind} size={18} />
+      </span>
+      <span style={{ display: "flex", flexDirection: "column", gap: 3, minWidth: 0, flex: 1 }}>
+        <span
+          title={label}
+          style={{
+            font: "600 14px/1.2 'Instrument Sans', system-ui, sans-serif",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+          }}
+        >
+          {label}
+        </span>
+        <span style={{ font: "400 12px/1.2 'Instrument Sans', system-ui, sans-serif", color: "var(--dv-text-3)" }}>
+          <span className="dv-mono" style={{ color: "var(--dv-text-2)" }}>
+            {count}
+          </span>{" "}
+          {count === 1 ? "title" : "titles"}
+        </span>
+      </span>
+      <svg
+        className="dv-category-card__chevron"
+        viewBox="0 0 24 24"
+        width={16}
+        height={16}
+        fill="none"
+        stroke="currentColor"
+        strokeWidth={1.7}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        aria-hidden="true"
+      >
+        <path d="M9 6l6 6-6 6" />
+      </svg>
+    </button>
   );
 }
 
@@ -300,18 +342,6 @@ function TitlesGroupPage({
     </div>
   );
 }
-
-const categoryCardStyle = {
-  display: "flex",
-  flexDirection: "column",
-  gap: 8,
-  padding: 18,
-  border: "1px solid var(--dv-border)",
-  borderRadius: 12,
-  background: "var(--dv-bg-sub)",
-  cursor: "pointer",
-  textAlign: "left",
-} as const;
 
 const itemRowStyle = {
   display: "flex",

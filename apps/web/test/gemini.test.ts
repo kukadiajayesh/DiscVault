@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { isUsableTextModel, listGeminiModels, pickRecommendedGeminiModel } from "../src/ai/gemini.js";
+import { generateIconPath, isUsableTextModel, listGeminiModels, pickRecommendedGeminiModel } from "../src/ai/gemini.js";
 
 function model(name: string, methods: string[] = ["generateContent"]) {
   return { name, supportedGenerationMethods: methods };
@@ -124,5 +124,45 @@ describe("listGeminiModels", () => {
     const result = await listGeminiModels("test-key");
 
     expect(result.map((m) => m.name)).toEqual(["gemini-2.5-flash"]);
+  });
+});
+
+describe("generateIconPath", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("sends prompt to gemini API and parses path successfully", async () => {
+    const mockResponse = {
+      candidates: [
+        {
+          content: {
+            parts: [
+              {
+                text: JSON.stringify({ path: "M12 2L2 22h20z" }),
+              },
+            ],
+          },
+        },
+      ],
+    };
+
+    const fetchMock = vi.fn(async () => {
+      return jsonResponse(mockResponse);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const path = await generateIconPath("test-api-key", "action", "genre");
+    expect(path).toBe("M12 2L2 22h20z");
+    expect(fetchMock).toHaveBeenCalled();
+  });
+
+  it("throws error when API response is invalid", async () => {
+    const fetchMock = vi.fn(async () => {
+      return jsonResponse({ error: "bad request" }, 400);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(generateIconPath("test-api-key", "action", "genre")).rejects.toThrow();
   });
 });

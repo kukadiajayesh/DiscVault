@@ -304,3 +304,69 @@ export async function identifyDiscItems(
   });
   return { raw: text, discTitle: parsed.discTitle?.trim() || null, items };
 }
+
+const ICON_REQUEST_TIMEOUT_MS = 20_000;
+
+/**
+ * Asks Gemini to generate a clean, modern, minimalist SVG path representation
+ * of a specific title category or genre.
+ */
+export async function generateIconPath(
+  apiKey: string,
+  name: string,
+  type: "title" | "genre",
+  model: string = DEFAULT_GEMINI_MODEL,
+): Promise<string> {
+  const prompt = [
+    `You are a professional vector icon designer. Generate a clean, modern, minimalist SVG path (specifically the string for the 'd' attribute of a <path> element) that beautifully and recognizably represents the ${type}: ${JSON.stringify(name)}.`,
+    "",
+    "Rules for the SVG path:",
+    '1. Designed for a 24x24 viewBox (viewBox="0 0 24 24")',
+    '2. It must be stroke-based: fill="none", stroke="currentColor", strokeWidth={1.7}, strokeLinecap="round", strokeLinejoin="round"',
+    "3. It must be a single cohesive line-art icon. It must look professional, clean, balanced, and recognizable.",
+    "4. All coordinate values MUST stay strictly within the 1 to 23 range (keep a 1-2px margin from the border).",
+    "5. Avoid extremely complex paths. Keep it elegant and simple, like a Lucide or Feather icon.",
+    "6. You MUST return ONLY the SVG path 'd' attribute string in the 'path' field of the JSON. Do not include any HTML tags, <svg> tags, <path> wrappers, or markdown.",
+    "",
+    "Return the result matching the response schema.",
+  ].join("\n");
+
+  const response = await fetchWithTimeout(
+    endpointFor(model),
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
+      body: JSON.stringify({
+        contents: [{ role: "user", parts: [{ text: prompt }] }],
+        generationConfig: {
+          responseMimeType: "application/json",
+          responseSchema: {
+            type: "OBJECT",
+            properties: {
+              path: {
+                type: "STRING",
+                description:
+                  "A single SVG path 'd' string (e.g. 'M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5'). Keep coordinates in 1-23 range.",
+              },
+            },
+            required: ["path"],
+          },
+        },
+      }),
+    },
+    ICON_REQUEST_TIMEOUT_MS,
+  );
+
+  if (!response.ok) {
+    const body = await response.text().catch(() => "");
+    throw new Error(`Gemini request failed (${response.status}): ${body.slice(0, 200) || response.statusText}`);
+  }
+
+  const data = (await response.json()) as GeminiResponse;
+  const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+  if (!text) throw new Error("Gemini returned no content");
+  const parsed = JSON.parse(text) as { path?: string };
+  if (!parsed.path) throw new Error("Gemini response missing 'path' property");
+
+  return parsed.path.trim();
+}
