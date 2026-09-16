@@ -1,7 +1,13 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
-import { type KeyboardEvent, type UIEvent, useEffect, useMemo, useRef, useState } from "react";
-import { analyzeDiscWithAi, buildModelFallbackChain } from "../ai/analyze.js";
+import { type KeyboardEvent, type UIEvent, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { buildModelFallbackChain } from "../ai/analyze.js";
+import {
+  cancelBulkAnalyze,
+  getSnapshot as getBulkAnalyzeSnapshot,
+  startBulkAnalyze,
+  subscribe as subscribeBulkAnalyze,
+} from "../ai/bulk-analyze.js";
 import { listGeminiModels } from "../ai/gemini.js";
 import { getGeminiApiKey, getGeminiModel } from "../ai/gemini-key.js";
 import type { DiscListItem } from "../db/catalog.js";
@@ -49,9 +55,10 @@ export default function Discs() {
   const [sort, setSortState] = useState<SortKey>(() => {
     return (sessionStorage.getItem("discvault:discs:sort") as SortKey) ?? "no";
   });
-  const [bulkProgress, setBulkProgress] = useState<{ done: number; total: number; discNo: number } | null>(null);
-  const [bulkError, setBulkError] = useState<string | null>(null);
-  const cancelBulk = useRef(false);
+  const bulkAnalyze = useSyncExternalStore(subscribeBulkAnalyze, getBulkAnalyzeSnapshot);
+  const bulkProgress = bulkAnalyze.progress;
+  const [keyError, setKeyError] = useState<string | null>(null);
+  const bulkError = keyError ?? bulkAnalyze.error;
 
   const containerRef = useRef<HTMLDivElement>(null);
   const hasRestoredScroll = useRef(false);
@@ -141,40 +148,21 @@ export default function Discs() {
   };
 
   /**
-   * Sends every currently-listed disc that hasn't been analyzed yet through Gemini one at a time
-   * (never in parallel — friendly to the free-tier API key this app assumes). Each disc itself falls
-   * through every available model before counting as failed (`analyzeDiscWithAi`), so this only stops
-   * early once a disc has exhausted every model — at that point the error is shown and clicking again
-   * resumes with whatever's still unanalyzed, instead of plowing through the rest with the same failure.
+   * Hands every currently-listed disc that hasn't been analyzed yet to the app-level bulk-analyze
+   * queue (ai/bulk-analyze.ts), which throttles to one disc every 5 minutes and keeps running even
+   * if this screen unmounts — the queue is a module singleton, not component state.
    */
-  const analyzeAllWithAi = async () => {
+  const analyzeAllWithAi = () => {
     const apiKey = getGeminiApiKey();
     if (!apiKey) {
-      setBulkError("Add a Gemini API key in Settings → AI first.");
+      setKeyError("Add a Gemini API key in Settings → AI first.");
       return;
     }
-    const targets = rows.filter((d) => !analyzedNos.has(d.disc_no));
+    setKeyError(null);
+    const targets = rows.filter((d) => !analyzedNos.has(d.disc_no)).map((d) => ({ discNo: d.disc_no, hasTitle: !!d.title }));
     if (targets.length === 0) return;
     const models = buildModelFallbackChain(getGeminiModel(), aiModelsQuery.data ?? []);
-    cancelBulk.current = false;
-    setBulkError(null);
-    let done = 0;
-    try {
-      for (const d of targets) {
-        if (cancelBulk.current) break;
-        setBulkProgress({ done, total: targets.length, discNo: d.disc_no });
-        await analyzeDiscWithAi(d.disc_no, { apiKey, models, hasTitle: !!d.title });
-        done++;
-        await queryClient.invalidateQueries({ queryKey: ["disc-nos-with-ai-items"] });
-      }
-    } catch (err) {
-      setBulkError(
-        `Stopped after ${done} of ${targets.length} — disc #${targets[done]?.disc_no} failed: ${err instanceof Error ? err.message : String(err)}`,
-      );
-    } finally {
-      setBulkProgress(null);
-      await queryClient.invalidateQueries({ queryKey: ["discs-recent"] });
-    }
+    void startBulkAnalyze(targets, { apiKey, models });
   };
 
   const capacityPct = (d: DiscListItem): number => {
@@ -237,8 +225,9 @@ export default function Discs() {
             <option value="pct">Sort: Size</option>
           </select>
           {bulkProgress ? (
-            <Button variant="secondary" onClick={() => (cancelBulk.current = true)}>
-              Analyzing #{bulkProgress.discNo} ({bulkProgress.done}/{bulkProgress.total}) — Cancel
+            <Button variant="secondary" onClick={cancelBulkAnalyze}>
+              {bulkProgress.waiting ? `Waiting for #${bulkProgress.discNo}` : `Analyzing #${bulkProgress.discNo}`} ({bulkProgress.done}/
+              {bulkProgress.total}) — Cancel
             </Button>
           ) : (
             unanalyzedCount > 0 && (
