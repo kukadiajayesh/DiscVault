@@ -261,8 +261,12 @@ export async function identifyDiscItems(
   apiKey: string,
   input: DiscAiSummary,
   model: string = DEFAULT_GEMINI_MODEL,
+  onLog?: (msg: string) => void,
 ): Promise<IdentifyResult> {
-  const response = await fetch(`${endpointFor(model)}?key=${encodeURIComponent(apiKey)}`, {
+  const url = endpointFor(model);
+  onLog?.(`[HTTP Request] POST ${url}`);
+  const start = Date.now();
+  const response = await fetch(`${url}?key=${encodeURIComponent(apiKey)}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -270,6 +274,8 @@ export async function identifyDiscItems(
       generationConfig: { responseMimeType: "application/json", responseSchema: RESPONSE_SCHEMA },
     }),
   });
+  const duration = Date.now() - start;
+  onLog?.(`[HTTP Response] POST ${url} - Status ${response.status} (${duration}ms)`);
   if (!response.ok) {
     const body = await response.text().catch(() => "");
     throw new Error(`Gemini request failed (${response.status}): ${body.slice(0, 200) || response.statusText}`);

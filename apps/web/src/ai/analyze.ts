@@ -35,8 +35,9 @@ export function buildModelFallbackChain(preferred: string, available: { name: st
  */
 export async function analyzeDiscWithAi(
   discNo: number,
-  opts: { apiKey: string; models: string[]; hasTitle: boolean },
+  opts: { apiKey: string; models: string[]; hasTitle: boolean; onLog?: (msg: string) => void },
 ): Promise<AnalyzeDiscResult> {
+  opts.onLog?.("Preparing file catalog metadata summary...");
   const summary = await vaultWorker().discAiSummary(discNo);
   if (!summary) throw new Error(`disc #${discNo} not found`);
   if (opts.models.length === 0) throw new Error("no Gemini model available to try");
@@ -46,6 +47,7 @@ export async function analyzeDiscWithAi(
   let usedModel: string | undefined;
   for (const model of opts.models) {
     try {
+      opts.onLog?.(`Calling Gemini API via model: ${model}...`);
       result = await identifyDiscItems(opts.apiKey, summary, model);
       usedModel = model;
       break;
@@ -57,6 +59,7 @@ export async function analyzeDiscWithAi(
     const list = opts.models.length > 1 ? `all ${opts.models.length} models failed` : "the model failed";
     throw new Error(`disc #${discNo}: ${list} —\n${failures.join("\n")}`);
   }
+  opts.onLog?.("Gemini analysis successful! Parsing items...");
   setGeminiModel(usedModel);
 
   const analyzedAt = new Date().toISOString();
@@ -64,6 +67,7 @@ export async function analyzeDiscWithAi(
   await vaultWorker().applyDiscItems(discNo, result.items);
   if (!opts.hasTitle && result.discTitle) await vaultWorker().setDiscTitle(discNo, result.discTitle);
 
+  opts.onLog?.(`Identified ${result.items.length} item(s) on disc.`);
   return { itemCount: result.items.length, discTitle: result.discTitle, model: usedModel };
 }
 
@@ -73,16 +77,26 @@ export async function analyzeDiscWithAi(
  * provider key, no search match, or a network failure for one item must never fail the whole
  * analyze flow or block the others — each item is attempted independently.
  */
-export async function fetchPreviewImagesForDisc(discNo: number): Promise<void> {
+export async function fetchPreviewImagesForDisc(discNo: number, onLog?: (msg: string) => void): Promise<void> {
   const items = await vaultWorker().discItems(discNo);
   await Promise.all(
     items.map(async (item) => {
       try {
+        const titleLabel = item.title ?? item.label;
+        onLog?.(`Searching artwork for: "${titleLabel}" (${item.contentType})...`);
         const imageUrl = await lookupPreviewImage(item);
         await vaultWorker().setDiscItemImageUrl(item.id, imageUrl);
-        if (imageUrl) await vaultWorker().cacheDiscItemImage(item.id, imageUrl);
-      } catch {
+        if (imageUrl) {
+          onLog?.(`Found artwork URL for: "${titleLabel}"`);
+          onLog?.(`Downloading & caching artwork blob for: "${titleLabel}"...`);
+          await vaultWorker().cacheDiscItemImage(item.id, imageUrl);
+          onLog?.(`Successfully cached artwork for: "${titleLabel}"`);
+        } else {
+          onLog?.(`No artwork found for: "${titleLabel}"`);
+        }
+      } catch (err) {
         // one item's image failing must never affect its metadata or any other item
+        onLog?.(`Error fetching artwork for item: ${err instanceof Error ? err.message : String(err)}`);
       }
     }),
   );

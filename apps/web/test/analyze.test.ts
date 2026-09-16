@@ -63,6 +63,20 @@ describe("analyzeDiscWithAi", () => {
     expect(mockApi.setDiscTitle).toHaveBeenCalledWith(1, "Found It");
   });
 
+  it("invokes the onLog callback with status messages during execution", async () => {
+    mockApi.discAiSummary.mockResolvedValue({ discNo: 1, title: null, label: null });
+    mockIdentify.mockResolvedValue({ raw: "{}", discTitle: "Found It", items: [] });
+    const logs: string[] = [];
+    const onLog = vi.fn((msg) => logs.push(msg));
+
+    await analyzeDiscWithAi(1, { apiKey: "key", models: ["model-a"], hasTitle: false, onLog });
+
+    expect(onLog).toHaveBeenCalled();
+    expect(logs).toContain("Preparing file catalog metadata summary...");
+    expect(logs).toContain("Calling Gemini API via model: model-a...");
+    expect(logs).toContain("Gemini analysis successful! Parsing items...");
+  });
+
   it("throws with every model's failure once all of them fail", async () => {
     mockApi.discAiSummary.mockResolvedValue({ discNo: 1, title: null, label: null });
     mockIdentify.mockRejectedValue(new Error("quota exceeded"));
@@ -111,5 +125,19 @@ describe("fetchPreviewImagesForDisc", () => {
 
     expect(mockApi.setDiscItemImageUrl).toHaveBeenCalledWith("item-2", "https://image.tmdb.org/t/p/w500/fine.jpg");
     expect(mockApi.setDiscItemImageUrl).not.toHaveBeenCalledWith("item-1", expect.anything());
+  });
+
+  it("invokes the onLog callback with status messages during lookup", async () => {
+    mockApi.discItems.mockResolvedValue([{ id: "item-1", contentType: "movie", title: "Inception", year: "2010" }]);
+    mockLookup.mockResolvedValue("https://image.tmdb.org/t/p/w500/poster.jpg");
+    const logs: string[] = [];
+    const onLog = vi.fn((msg) => logs.push(msg));
+
+    await fetchPreviewImagesForDisc(1, onLog);
+
+    expect(onLog).toHaveBeenCalled();
+    expect(logs.some((l) => l.includes("Searching artwork for"))).toBe(true);
+    expect(logs.some((l) => l.includes("Found artwork URL"))).toBe(true);
+    expect(logs.some((l) => l.includes("Successfully cached artwork"))).toBe(true);
   });
 });

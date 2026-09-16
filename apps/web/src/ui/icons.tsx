@@ -21,18 +21,40 @@ export const ICON_PATH = {
   AI: "M12 22c0-5.523-4.477-10-10-10 5.523 0 10-4.477 10-10 0 5.523 4.477 10 10 10-5.523 0-10 4.477-10 10z",
   Import: "M21 16l-4 4-4-4M17 20V4M3 8l4-4 4 4M7 4v16",
   Copy: "M11 9H20A2 2 0 0 1 22 11V20A2 2 0 0 1 20 22H11A2 2 0 0 1 9 20V11A2 2 0 0 1 11 9ZM5 15H4A2 2 0 0 1 2 13V4A2 2 0 0 1 4 2H13A2 2 0 0 1 15 4V5",
+  Folder: "M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z",
+  File: "M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9zM13 2v7h7",
+  "File Video": "M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8zM14 2v6h6M10 16l5-3-5-3v6z",
+  "File Audio": "M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8zM14 2v6h6M8 13h2v5H8zM12 11h2v7h-2z",
+  "File Image":
+    "M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8zM14 2v6h6M20 15l-4-4-6 6M8 14l-2 2M9 11a1 1 0 1 0 0-2 1 1 0 0 0 0 2z",
+  "File Archive": "M21 8v13H3V8M1 3h22v5H1zM10 12h4v4h-4z",
+  "File Text": "M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8zM14 2v6h6M16 13H8M16 17H8M10 9H8",
+  "File Code": "M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8zM14 2v6h6M10 13l-2 2 2 2M14 13l2 2-2 2",
+  Grid: "M3 3h7v7H3zM14 3h7v7h-7zM14 14h7v7h-7zM3 14h7v7H3z",
+  List: "M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01",
+  ArrowLeft: "M19 12H5M12 19l-7-7 7-7",
 } as const;
 
 export type IconName = keyof typeof ICON_PATH;
 
-export function Icon({ name, size = 17, color = "currentColor" }: { name: IconName; size?: number; color?: string }) {
+export function Icon({
+  name,
+  size = 17,
+  color = "currentColor",
+  fill = "none",
+}: {
+  name: IconName;
+  size?: number;
+  color?: string;
+  fill?: string;
+}) {
   return (
     <svg
       viewBox="0 0 24 24"
       width={size}
       height={size}
       style={{ flex: "none", color }}
-      fill="none"
+      fill={fill}
       stroke="currentColor"
       strokeWidth={1.7}
       strokeLinecap="round"

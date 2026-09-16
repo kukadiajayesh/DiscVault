@@ -19,7 +19,7 @@ export interface PreviewImageQuery {
  * every provider call already swallows its own failures, and this is one more defensive layer in
  * case that ever changes — a lookup failure must never block saving the item's other metadata.
  */
-export async function lookupPreviewImage(item: PreviewImageQuery): Promise<string | null> {
+export async function lookupPreviewImage(item: PreviewImageQuery, onLog?: (msg: string) => void): Promise<string | null> {
   if (!item.title) return null;
   try {
     // `return await`, not a bare `return`, so a rejection from any of these — none should ever
@@ -28,20 +28,51 @@ export async function lookupPreviewImage(item: PreviewImageQuery): Promise<strin
     switch (item.contentType) {
       case "movie": {
         const key = getTmdbApiKey();
-        return key ? await searchTmdbPoster(key, item.title, item.year) : null;
+        if (key) {
+          onLog?.(`[HTTP Request] GET https://api.themoviedb.org/3/search/movie (query="${item.title}")`);
+          const start = Date.now();
+          const res = await searchTmdbPoster(key, item.title, item.year);
+          const duration = Date.now() - start;
+          onLog?.(`[HTTP Response] GET https://api.themoviedb.org/3/search/movie - ${res ? "Success" : "No match"} (${duration}ms)`);
+          return res;
+        }
+        onLog?.(`[Skip] TMDB movie search skipped (no TMDB API key configured)`);
+        return null;
       }
       case "game": {
         const key = getRawgApiKey();
-        return key ? await searchRawgImage(key, item.title) : null;
+        if (key) {
+          onLog?.(`[HTTP Request] GET https://api.rawg.io/api/games (query="${item.title}")`);
+          const start = Date.now();
+          const res = await searchRawgImage(key, item.title);
+          const duration = Date.now() - start;
+          onLog?.(`[HTTP Response] GET https://api.rawg.io/api/games - ${res ? "Success" : "No match"} (${duration}ms)`);
+          return res;
+        }
+        onLog?.(`[Skip] RAWG game search skipped (no RAWG API key configured)`);
+        return null;
       }
-      case "software":
-        return await searchItunesArtwork(item.title, "software");
-      case "music":
-        return await searchItunesArtwork(item.title, "music");
+      case "software": {
+        onLog?.(`[HTTP Request] GET https://itunes.apple.com/search (query="${item.title}", media="software")`);
+        const start = Date.now();
+        const res = await searchItunesArtwork(item.title, "software");
+        const duration = Date.now() - start;
+        onLog?.(`[HTTP Response] GET https://itunes.apple.com/search - ${res ? "Success" : "No match"} (${duration}ms)`);
+        return res;
+      }
+      case "music": {
+        onLog?.(`[HTTP Request] GET https://itunes.apple.com/search (query="${item.title}", media="music")`);
+        const start = Date.now();
+        const res = await searchItunesArtwork(item.title, "music");
+        const duration = Date.now() - start;
+        onLog?.(`[HTTP Response] GET https://itunes.apple.com/search - ${res ? "Success" : "No match"} (${duration}ms)`);
+        return res;
+      }
       default:
         return null;
     }
-  } catch {
+  } catch (err) {
+    onLog?.(`[Error] Lookup failed: ${err instanceof Error ? err.message : String(err)}`);
     return null;
   }
 }

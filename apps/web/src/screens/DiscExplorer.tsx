@@ -1,19 +1,32 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { analyzeDiscWithAi, buildModelFallbackChain, fetchPreviewImagesForDisc } from "../ai/analyze.js";
 import { listGeminiModels } from "../ai/gemini.js";
 import { getGeminiApiKey, getGeminiModel } from "../ai/gemini-key.js";
 import type { FolderChild } from "../db/catalog.js";
 import { vaultWorker } from "../db/rpc.js";
 import { formatCount, formatDate, formatSizeKb } from "../ui/format.js";
+import { Icon, type IconName } from "../ui/icons.js";
 import { ItemPreviewImage } from "../ui/item-preview-image.js";
-import { ConfirmDialog, categoryColor, Meter } from "../ui/primitives.js";
+import { ConfirmDialog, categoryColor, Meter, Overlay } from "../ui/primitives.js";
 
 type Tab = "browse" | "overview" | "activity";
 
 function joinPath(parts: string[]): string {
   return parts.join("/");
+}
+
+function getFileIcon(ext: string | null | undefined): IconName {
+  if (!ext) return "File";
+  const e = ext.toLowerCase();
+  if (["mp4", "mkv", "avi", "mov", "wmv", "flv", "webm"].includes(e)) return "File Video";
+  if (["mp3", "flac", "wav", "m4a", "ogg", "aac"].includes(e)) return "File Audio";
+  if (["jpg", "jpeg", "png", "gif", "webp", "bmp", "svg"].includes(e)) return "File Image";
+  if (["zip", "rar", "7z", "tar", "gz", "iso"].includes(e)) return "File Archive";
+  if (["txt", "md", "pdf", "doc", "docx", "rtf", "csv", "json"].includes(e)) return "File Text";
+  if (["js", "ts", "html", "css", "py", "c", "cpp", "java", "sql", "xml"].includes(e)) return "File Code";
+  return "File";
 }
 
 /** §8 screen 6: disc header + Browse (lazy folder tree) / Overview / Activity tabs. */
@@ -26,10 +39,22 @@ export default function DiscExplorer() {
   const queryClient = useQueryClient();
 
   const [tab, setTab] = useState<Tab>("browse");
+  const [viewMode, setViewMode] = useState<"list" | "grid">("list");
   const [selectedFile, setSelectedFile] = useState<FolderChild | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [notes, setNotes] = useState<string | null>(null);
   const [analyzing, setAnalyzing] = useState(false);
+  const [logs, setLogs] = useState<Array<{ id: string; text: string }>>([]);
+  const [showLogsDialog, setShowLogsDialog] = useState(false);
+  const logEndRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (showLogsDialog) {
+      const _v = logs.length;
+      logEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    }
+  }, [logs.length, showLogsDialog]);
+
   const [aiError, setAiError] = useState<string | null>(null);
   const [aiModel, setAiModel] = useState(() => getGeminiModel());
   const geminiApiKey = getGeminiApiKey();
@@ -89,6 +114,15 @@ export default function DiscExplorer() {
     navigate({ to: "/discs" });
   };
 
+  const addLog = (msg: string) => {
+    const timestamp = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+    const safeMsg = msg.length > 1000 ? msg.slice(0, 1000) + "… (truncated)" : msg;
+    setLogs((prev) => {
+      const next = [...prev, { id: `${Date.now()}-${Math.random()}`, text: `[${timestamp}] ${safeMsg}` }];
+      return next.slice(-100);
+    });
+  };
+
   const analyzeWithAi = async () => {
     const apiKey = getGeminiApiKey();
     if (!apiKey) {
@@ -97,9 +131,17 @@ export default function DiscExplorer() {
     }
     setAnalyzing(true);
     setAiError(null);
+    setLogs([]);
+    setShowLogsDialog(true);
+    addLog(`Starting analysis for disc #${discNo}...`);
     try {
       const models = buildModelFallbackChain(aiModel, aiModels);
-      const result = await analyzeDiscWithAi(discNo, { apiKey, models, hasTitle: !!discQuery.data?.title });
+      const result = await analyzeDiscWithAi(discNo, {
+        apiKey,
+        models,
+        hasTitle: !!discQuery.data?.title,
+        onLog: addLog,
+      });
       setAiModel(result.model);
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["disc-items", discNo] }),
@@ -107,11 +149,16 @@ export default function DiscExplorer() {
       ]);
       // Fire-and-forget: item cards are already useful without preview images, so don't block on
       // them — re-invalidate once they've resolved so the cards pick them up.
-      fetchPreviewImagesForDisc(discNo)
-        .catch(() => {})
-        .then(() => queryClient.invalidateQueries({ queryKey: ["disc-items", discNo] }));
+      addLog("Starting background preview images search...");
+      fetchPreviewImagesForDisc(discNo, addLog)
+        .catch((err) => addLog(`Preview search error: ${err instanceof Error ? err.message : String(err)}`))
+        .then(() => {
+          addLog("Background preview search finished.");
+          queryClient.invalidateQueries({ queryKey: ["disc-items", discNo] });
+        });
     } catch (err) {
       setAiError(err instanceof Error ? err.message : String(err));
+      addLog(`Analysis failed: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
       setAnalyzing(false);
     }
@@ -274,6 +321,7 @@ export default function DiscExplorer() {
                 flex: "none",
                 display: "flex",
                 alignItems: "center",
+                justifyContent: "space-between",
                 gap: 10,
                 padding: "10px 16px",
                 borderBottom: "1px solid var(--dv-border)",
@@ -281,8 +329,13 @@ export default function DiscExplorer() {
               }}
             >
               <div style={{ display: "flex", alignItems: "center", gap: 2, flexWrap: "wrap" }}>
-                <button type="button" onClick={() => goPath("")} style={crumbStyle}>
-                  (root) /
+                <button
+                  type="button"
+                  onClick={() => goPath("")}
+                  style={{ ...crumbStyle, display: "flex", alignItems: "center", paddingRight: 8 }}
+                  title="Go to root"
+                >
+                  <Icon name="ArrowLeft" size={14} />
                 </button>
                 {crumbs.map((c, i) => (
                   <button
@@ -295,77 +348,132 @@ export default function DiscExplorer() {
                   </button>
                 ))}
               </div>
+              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <button
+                  type="button"
+                  onClick={() => setViewMode("list")}
+                  style={{
+                    ...viewModeButtonStyle,
+                    color: viewMode === "list" ? "var(--dv-accent)" : "var(--dv-text-3)",
+                    background: viewMode === "list" ? "var(--dv-accent-soft)" : "transparent",
+                  }}
+                  title="List view"
+                >
+                  <Icon name="List" size={16} />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setViewMode("grid")}
+                  style={{
+                    ...viewModeButtonStyle,
+                    color: viewMode === "grid" ? "var(--dv-accent)" : "var(--dv-text-3)",
+                    background: viewMode === "grid" ? "var(--dv-accent-soft)" : "transparent",
+                  }}
+                  title="Grid view"
+                >
+                  <Icon name="Grid" size={16} />
+                </button>
+              </div>
             </div>
-            <div style={{ flex: 1, minHeight: 0, overflow: "auto" }}>
+            <div
+              style={{
+                flex: 1,
+                minHeight: 0,
+                overflow: "auto",
+                ...(viewMode === "grid"
+                  ? {
+                      display: "grid",
+                      gridTemplateColumns: "repeat(auto-fill, minmax(110px, 1fr))",
+                      gap: 16,
+                      padding: 16,
+                      alignContent: "flex-start",
+                    }
+                  : {}),
+              }}
+            >
               {(entriesQuery.data ?? []).map((e) => (
                 <button
                   type="button"
                   key={`${e.kind}:${e.kind === "folder" ? e.folder_id : e.file_id}`}
                   onClick={() => (e.kind === "folder" ? goPath(joinPath([...crumbs, e.name])) : setSelectedFile(e))}
-                  style={{
-                    display: "flex",
-                    width: "100%",
-                    alignItems: "center",
-                    gap: 10,
-                    height: "var(--dv-row)",
-                    padding: "0 16px",
-                    border: 0,
-                    borderBottom: "1px solid var(--dv-border)",
-                    background: "transparent",
-                    textAlign: "left",
-                    cursor: "pointer",
-                  }}
+                  style={
+                    viewMode === "grid"
+                      ? {
+                          display: "flex",
+                          flexDirection: "column",
+                          alignItems: "center",
+                          gap: 8,
+                          padding: 12,
+                          border: "1px solid transparent",
+                          borderRadius: 8,
+                          background: selectedFile === e ? "var(--dv-sel)" : "transparent",
+                          textAlign: "center",
+                          cursor: "pointer",
+                        }
+                      : {
+                          display: "flex",
+                          width: "100%",
+                          alignItems: "center",
+                          gap: 10,
+                          height: "var(--dv-row)",
+                          padding: "0 16px",
+                          border: 0,
+                          borderBottom: "1px solid var(--dv-border)",
+                          background: selectedFile === e ? "var(--dv-sel)" : "transparent",
+                          textAlign: "left",
+                          cursor: "pointer",
+                        }
+                  }
                 >
                   {e.kind === "folder" ? (
                     <>
+                      <Icon name="Folder" size={viewMode === "grid" ? 40 : 20} color="var(--dv-accent)" fill="currentColor" />
                       <span
                         style={{
-                          width: 14,
-                          textAlign: "center",
-                          font: "400 13px/1 'JetBrains Mono', monospace",
-                          color: "var(--dv-text-3)",
-                        }}
-                      >
-                        ▸
-                      </span>
-                      <span
-                        style={{
-                          flex: 1,
-                          minWidth: 0,
-                          font: "500 13px/1 'Instrument Sans', system-ui, sans-serif",
+                          ...(viewMode === "list"
+                            ? { flex: 1, minWidth: 0, whiteSpace: "nowrap" }
+                            : { width: "100%", whiteSpace: "normal", wordBreak: "break-word" }),
+                          font: "500 13px/1.3 'Instrument Sans', system-ui, sans-serif",
                           overflow: "hidden",
                           textOverflow: "ellipsis",
-                          whiteSpace: "nowrap",
                         }}
                       >
                         {e.name}
                       </span>
-                      <span className="dv-mono" style={{ fontSize: 11, color: "var(--dv-text-2)" }}>
-                        {formatSizeKb(e.size_kb)}
-                      </span>
-                      <span style={{ width: 80 }} />
+                      {viewMode === "list" && (
+                        <>
+                          <span className="dv-mono" style={{ fontSize: 11, color: "var(--dv-text-2)" }}>
+                            {formatSizeKb(e.size_kb)}
+                          </span>
+                          <span style={{ width: 80 }} />
+                        </>
+                      )}
                     </>
                   ) : (
                     <>
-                      <span style={{ width: 7, height: 7, flex: "none", borderRadius: 2, background: categoryColor("other") }} />
+                      <Icon name={getFileIcon(e.ext)} size={viewMode === "grid" ? 40 : 20} color={categoryColor("other")} />
                       <span
                         style={{
-                          flex: 1,
-                          minWidth: 0,
-                          font: "400 13px/1 'Instrument Sans', system-ui, sans-serif",
+                          ...(viewMode === "list"
+                            ? { flex: 1, minWidth: 0, whiteSpace: "nowrap" }
+                            : { width: "100%", whiteSpace: "normal", wordBreak: "break-word" }),
+                          font: "400 13px/1.3 'Instrument Sans', system-ui, sans-serif",
                           overflow: "hidden",
                           textOverflow: "ellipsis",
-                          whiteSpace: "nowrap",
                         }}
                       >
                         {e.name}
                       </span>
-                      <span className="dv-mono" style={{ fontSize: 11, color: "var(--dv-text-2)" }}>
-                        {formatSizeKb(e.size_kb)}
-                      </span>
-                      <span className="dv-mono" style={{ fontSize: 11, color: "var(--dv-text-3)", width: 80, textAlign: "right" }}>
-                        {formatDate(e.created)}
-                      </span>
+                      {viewMode === "list" && (
+                        <>
+                          <span className="dv-mono" style={{ fontSize: 11, color: "var(--dv-text-2)" }}>
+                            {formatSizeKb(e.size_kb)}
+                          </span>
+                          <span className="dv-mono" style={{ fontSize: 11, color: "var(--dv-text-3)", width: 80, textAlign: "right" }}>
+                            {formatDate(e.created)}
+                          </span>
+                        </>
+                      )}
                     </>
                   )}
                 </button>
@@ -381,7 +489,7 @@ export default function DiscExplorer() {
             {selectedFile && selectedFile.kind === "file" ? (
               <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                  <span style={{ width: 9, height: 9, flex: "none", borderRadius: 3, background: categoryColor("other") }} />
+                  <Icon name={getFileIcon(selectedFile.ext)} size={20} color={categoryColor("other")} />
                   <span style={{ font: "600 14px/1.3 'Instrument Sans', system-ui, sans-serif", wordBreak: "break-word" }}>
                     {selectedFile.name}
                   </span>
@@ -547,6 +655,11 @@ export default function DiscExplorer() {
                 <button
                   type="button"
                   onClick={analyzeWithAi}
+                  onMouseEnter={() => {
+                    if (logs.length > 0) {
+                      setShowLogsDialog(true);
+                    }
+                  }}
                   disabled={analyzing}
                   style={{
                     minHeight: 26,
@@ -557,8 +670,23 @@ export default function DiscExplorer() {
                     font: "500 11px/1 'Instrument Sans', system-ui, sans-serif",
                     cursor: analyzing ? "default" : "pointer",
                     opacity: analyzing ? 0.6 : 1,
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 6,
                   }}
                 >
+                  {analyzing && (
+                    <span
+                      style={{
+                        width: 10,
+                        height: 10,
+                        border: "1.5px solid var(--dv-text-3)",
+                        borderTopColor: "transparent",
+                        borderRadius: "50%",
+                        animation: "dvspin 1s linear infinite",
+                      }}
+                    />
+                  )}
                   {analyzing ? "Analyzing…" : (itemsQuery.data?.length ?? 0) > 0 ? "Re-analyze" : "Analyze with AI"}
                 </button>
               </div>
@@ -662,6 +790,78 @@ export default function DiscExplorer() {
           onCancel={() => setConfirmDelete(false)}
         />
       )}
+
+      {showLogsDialog && logs.length > 0 && (
+        <Overlay onClose={() => setShowLogsDialog(false)}>
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              borderBottom: "1px solid var(--dv-border)",
+              paddingBottom: 10,
+              marginBottom: 10,
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <span style={{ font: "700 14px 'Instrument Sans', system-ui, sans-serif", color: "var(--dv-text)" }}>Live API Logs</span>
+              <span
+                style={{
+                  width: 6,
+                  height: 6,
+                  borderRadius: "50%",
+                  background: analyzing ? "var(--dv-accent)" : "var(--dv-text-3)",
+                  animation: analyzing ? "dvpulse 1.5s infinite ease-in-out" : "none",
+                }}
+              />
+            </div>
+            <button
+              type="button"
+              onClick={() => setShowLogsDialog(false)}
+              style={{
+                border: 0,
+                background: "transparent",
+                cursor: "pointer",
+                font: "400 16px/1 'JetBrains Mono', monospace",
+                color: "var(--dv-text-3)",
+                padding: 4,
+              }}
+            >
+              ✕
+            </button>
+          </div>
+          <div
+            style={{
+              flex: 1,
+              overflowY: "auto",
+              display: "flex",
+              flexDirection: "column",
+              gap: 8,
+              fontFamily: "'JetBrains Mono', monospace",
+              fontSize: 11,
+              lineHeight: 1.5,
+              padding: "4px 0",
+            }}
+          >
+            {logs.map((log) => (
+              <div
+                key={log.id}
+                style={{
+                  color: log.text.includes("failed") || log.text.includes("Error") ? "var(--dv-err)" : "var(--dv-text-2)",
+                  whiteSpace: "pre-wrap",
+                  wordBreak: "break-word",
+                  overflowWrap: "anywhere",
+                  paddingBottom: 6,
+                  borderBottom: "1px solid var(--dv-off-soft)",
+                }}
+              >
+                {log.text}
+              </div>
+            ))}
+            <div ref={logEndRef} />
+          </div>
+        </Overlay>
+      )}
     </div>
   );
 }
@@ -726,4 +926,14 @@ const openOnDiscButtonStyle = {
   cursor: "pointer",
   padding: 0,
   font: "500 11px/1.4 'JetBrains Mono', monospace",
+} as const;
+
+const viewModeButtonStyle = {
+  border: 0,
+  cursor: "pointer",
+  padding: 6,
+  borderRadius: 6,
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
 } as const;
